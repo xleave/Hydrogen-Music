@@ -15,15 +15,12 @@ function emit(name, ...args) {
 
 async function scanLocalMusic(params) {
   const settings = await invoke('get_settings')
-  const folders = params.type === 'downloaded'
-    ? [settings.local.downloadFolder].filter(Boolean)
-    : settings.local.localFolder
+  const folders = settings.local.localFolder
   const result = await invoke('scan_local_music', { folders })
   emit('localMusicCount', result.count)
   emit('localMusicFiles', { ...result, type: params.type })
 }
 
-const unsupportedResult = async () => null
 const noop = () => {}
 
 export function installWindowApi() {
@@ -48,7 +45,6 @@ export function installWindowApi() {
     getSettings: () => invoke('get_settings'),
     openFile: () => open({ directory: true, multiple: false }),
     selectFile: () => open({ directory: false, multiple: false }),
-    clearLocalMusicData: noop,
     openLocalFolder: (path) => revealItemInDir(path),
     saveLastPlaylist: (playlist) => invoke('save_last_playlist', { playlist }),
     getLastPlaylist: () => invoke('get_last_playlist'),
@@ -62,24 +58,9 @@ export function installWindowApi() {
     musicProcessControl: (callback) => subscribe('musicProcessControl', callback),
     hidePlayer: (callback) => subscribe('hidePlayer', callback),
     lyricControl: (callback) => subscribe('lyricControl', callback),
-    checkUpdate: noop,
     playOrPauseMusicCheck: noop,
     changeTrayMusicPlaymode: noop,
     registerShortcuts: noop,
     unregisterShortcuts: noop,
-    startDownload: noop,
-    download: noop,
-    downloadNext: noop,
-    downloadProgress: noop,
-    downloadPause: noop,
-    downloadResume: noop,
-    downloadCancel: noop,
-    downloadVideoProgress: noop,
-    cancelDownloadMusicVideo: noop,
-    getRequestData: unsupportedResult,
-    getBiliVideo: unsupportedResult,
-    musicVideoIsExists: unsupportedResult,
-    clearUnusedVideo: unsupportedResult,
-    deleteMusicVideo: unsupportedResult,
   }
 }

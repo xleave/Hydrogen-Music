@@ -1,7 +1,8 @@
 [package]
 name = "hydrogen-music"
-version = "0.6.0"
+version = "0.7.0"
 description = "A local-first music player"
+authors = ["xleave"]
 edition = "2021"
 
 [lib]

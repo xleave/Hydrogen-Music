@@ -37,15 +37,12 @@ pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), Stri
 pub fn default_settings() -> Value {
     json!({
         "music": {
-            "level": "lossless",
             "lyricSize": "20",
             "tlyricSize": "14",
             "rlyricSize": "12",
             "lyricInterlude": 13
         },
         "local": {
-            "videoFolder": null,
-            "downloadFolder": null,
             "localFolder": []
         },
         "shortcuts": [
@@ -64,4 +61,3 @@ pub fn default_settings() -> Value {
         }
     })
 }
-

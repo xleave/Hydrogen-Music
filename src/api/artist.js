@@ -1,1 +1,0 @@
-export { localOnly as getRecommendedArtists, localOnly as getUserSubArtists, localOnly as getArtistDetail, localOnly as getArtistTopSong, localOnly as getArtistAlbum, localOnly as getArtistFansCount, localOnly as subArtist } from './localOnly'

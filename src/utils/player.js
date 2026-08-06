@@ -3,26 +3,19 @@ import { Howl, Howler } from 'howler'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import dayjs from 'dayjs';
 import { noticeOpen } from './dialog'
-import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
-import { useLibraryStore } from '../store/libraryStore'
 import { useOtherStore } from '../store/otherStore'
 import { storeToRefs } from 'pinia'
 import duration from 'dayjs/plugin/duration'
 
 const otherStore = useOtherStore()
-const userStore = useUserStore()
-const libraryStore = useLibraryStore(pinia)
 const playerStore = usePlayerStore(pinia)
-const { libraryInfo } = storeToRefs(libraryStore)
-const { currentMusic, playing, progress, volume, quality, playMode, songList, shuffledList, shuffleIndex, listInfo, songId, currentIndex, time, playlistWidgetShow, playerChangeSong, lyric, lyricsObjArr, lyricShow, lyricEle, isLyricDelay, widgetState, localBase64Img, musicVideo, currentMusicVideo, musicVideoDOM, videoIsPlaying, playerShow, lyricBlur, coverUrl} = storeToRefs(playerStore)
+const { currentMusic, playing, progress, volume, playMode, songList, shuffledList, shuffleIndex, listInfo, songId, currentIndex, time, playlistWidgetShow, playerChangeSong, lyric, lyricsObjArr, lyricShow, lyricEle, isLyricDelay, widgetState, localBase64Img, lyricBlur, coverUrl} = storeToRefs(playerStore)
 
 let isProgress = false
 let musicProgress = null
 let loadLast = true
 let playModeOne = false //为true代表顺序播放已全部结束
-let currentTiming = null
-let videoCheckInterval = null
 
 export function loadLastSong() {
     if(loadLast) {
@@ -34,7 +27,6 @@ export function loadLastSong() {
             if(songList.value) {
                 if(songList.value[currentIndex.value].type == 'local') getSongUrl(songList.value[currentIndex.value].id, currentIndex.value, false, true)
                 else getSongUrl(songList.value[currentIndex.value].id, currentIndex.value, false, false)
-                if(musicVideo.value) loadMusicVideo(songList.value[currentIndex.value].id)
             }
         })
     }
@@ -111,7 +103,7 @@ export function setId(id, index) {
 
 export function addToList(listType, songlist) {
     listInfo.value = {
-        id: (listType == 'rec' ? 'rec' : (libraryInfo.value ? libraryInfo.value.id : 'none')),
+        id: 'local',
         type: listType
     }
     songList.value = songlist.slice(0,songlist.length + 1)
@@ -163,34 +155,6 @@ export function addLocalMusicTOList(listType, localMusicList, playId, playIndex)
     addSong(playId, playIndex, true, true)
     savePlaylist()
 }
-export function startLocalMusicVideo() {
-    clearInterval(videoCheckInterval)
-    videoCheckInterval = setInterval(() => {
-        musicVideoCheck(currentMusic.value.seek())
-    }, 200);
-}
-export function unloadMusicVideo() {
-    currentMusicVideo.value = null
-    videoIsPlaying.value = false
-    playerShow.value = true
-}
-export function loadMusicVideo(id) {
-    if(currentMusicVideo.value) unloadMusicVideo()
-    windowApi.musicVideoIsExists({id: id, method: 'verify'}).then(result => {
-        if(result == '404') {
-            videoCheckInterval = null
-            noticeOpen('未找到视频文件', 2)
-            unloadMusicVideo()
-        } else if(result) {
-            currentMusicVideo.value = result.data
-            if(songList.value[currentIndex.value].type == 'local') startLocalMusicVideo()
-        } else {
-            videoCheckInterval = null
-            unloadMusicVideo()
-        }
-    })
-}
-
 export function addSong(id, index, autoplay, isLocal) {
     progress.value = 0
     if(lyricShow.value) {
@@ -198,10 +162,7 @@ export function addSong(id, index, autoplay, isLocal) {
         playerChangeSong.value = true
     }
     setId(id, index)
-    if(musicVideo.value) loadMusicVideo(id)
-
-    if(songList.value[currentIndex.value].type == 'local') isLocal = true
-    else isLocal = false
+    isLocal = true
     
     if(currentMusic.value && volume.value != 0) {
         currentMusic.value.fade(volume.value,0,200)
@@ -283,10 +244,6 @@ export function startMusic() {
             clearTimeout(forbidDelayTimer)
         }, 700);
     }
-    if(videoIsPlaying.value) {
-        musicVideoDOM.value.play()
-        if(songList.value[currentIndex.value].type == 'local') startLocalMusicVideo()
-    }
 }
 export function pauseMusic() {
     clearInterval(musicProgress)
@@ -296,10 +253,6 @@ export function pauseMusic() {
             currentMusic.value.pause()
             playing.value = false
         })
-    }
-    if(videoIsPlaying.value) {
-        musicVideoDOM.value.pause()
-        if(songList.value[currentIndex.value].type == 'local') clearInterval(videoCheckInterval)
     }
 }
 
@@ -362,9 +315,6 @@ const clearLycAnimation = () => {
   }
 export function changeProgress(toTime) {
     if(!widgetState.value && lyricShow.value && lyricEle.value) clearLycAnimation()
-    if(videoIsPlaying.value) {
-        musicVideoCheck(toTime, true)
-    }
     currentMusic.value.seek(toTime)
 }
 //控制拖拽进度条
@@ -426,10 +376,6 @@ function getRandomInt(min, max) { // 获取min到max的一个随机数，包含m
     return Math.floor(Math.random() * (max - min + 1) + min)
 }
 
-export function likeSong() {
-    noticeOpen('本地版不提供云端收藏', 2)
-}
-
 export function addToNext(nextSong, autoplay) {
     if(!songList.value) songList.value = []
     if(nextSong.id == songId.value) return
@@ -485,36 +431,6 @@ export function songTime2(time) {
     if(sec < 10) sec = '0' + sec
     return min + ':' + sec
 }
-/**
- * 音乐视频监测
- */
-export function musicVideoCheck(seek, update) {
-    if(musicVideo.value && currentMusicVideo.value && !videoIsPlaying.value || update) {
-        for (let i = 0; i < currentMusicVideo.value.timing.length; i++) {
-            if(seek >= currentMusicVideo.value.timing[i].start && seek < currentMusicVideo.value.timing[i].end) {
-                if(playing.value) musicVideoDOM.value.play()
-                const vt = currentMusicVideo.value.timing[i].videoTiming + seek - currentMusicVideo.value.timing[i].start
-                musicVideoDOM.value.currentTime = vt
-                if(Math.abs(musicVideoDOM.value.currentTime - vt) > 1) return
-                currentTiming = currentMusicVideo.value.timing[i]
-                videoIsPlaying.value = true
-                if(!update) playerShow.value = false
-                return
-            }
-        }
-        videoIsPlaying.value = false
-        playerShow.value = true
-        musicVideoDOM.value.pause()
-    } else if(videoIsPlaying.value && currentTiming) {
-        if(seek > currentTiming.end) {
-            videoIsPlaying.value = false
-            playerShow.value = true
-            currentTiming = null
-        }
-    }
-}
-
-
 window.addEventListener('mousedown', (e) => {
     if(e.target.parentNode.parentNode.id == 'widget-progress') {
       changeProgressByDragStart()
@@ -535,9 +451,6 @@ window.addEventListener('click', (e) => {
         playlistWidgetShow.value = false
   }
   if(otherStore.contextMenuShow) otherStore.contextMenuShow = false
-  if(!otherStore.videoIsBlur && otherStore.videoPlayerShow && document.getElementById('videoPlayer').contains(e.target) == false) otherStore.videoIsBlur = true
-  else if(otherStore.videoIsBlur && otherStore.videoPlayerShow && document.getElementById('videoPlayer').contains(e.target) == true && document.getElementsByClassName('plyr__controls')[0].contains(e.target) != true) otherStore.videoIsBlur = false
-  if(userStore.appOptionShow && document.getElementsByClassName('user-head')[0].contains(e.target) != true) userStore.appOptionShow = false
 })
 windowApi.playOrPauseMusic((event) => {
     if(playing.value) pauseMusic()
@@ -576,16 +489,11 @@ windowApi.musicProcessControl((event, mode) => {
         if(progress.value - 3 > 0) progress.value -= 3
         else progress.value = 0
     }
-    if(videoIsPlaying.value) {
-        musicVideoCheck(progress.value, true)
-    }
     currentMusic.value.seek(progress.value)
 })
 windowApi.playOrPauseMusicCheck(playing.value)
 windowApi.changeTrayMusicPlaymode(playMode.value)
 windowApi.beforeQuit(() => {
-    //关闭之前清除下载管理中的状态
-    windowApi.downloadPause('shutdown')
     let list = {
         songList: songList.value,
         shuffledList: shuffledList.value

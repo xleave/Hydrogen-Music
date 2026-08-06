@@ -1,1 +1,0 @@
-export { localOnly as getRecommendedSongList, localOnly as getTopList, localOnly as getPlaylistDetail, localOnly as getPlaylistAll, localOnly as getRecommendSongs, localOnly as subPlaylist, localOnly as playlistDynamic, localOnly as createPlaylist, localOnly as updatePlaylist, localOnly as deletePlaylist } from './localOnly'

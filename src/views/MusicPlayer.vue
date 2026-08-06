@@ -1,8 +1,6 @@
 <script setup>
   import Player from '../components/Player.vue'
   import Lyric from '../components/Lyric.vue'
-  import MusicVideo from '../components/MusicVideo.vue';
-  import PlayerVideo from '../components/PlayerVideo.vue';
   import { usePlayerStore } from '../store/playerStore';
   const playerStore = usePlayerStore()
 </script>
@@ -10,16 +8,10 @@
 <template>
   <div class="music-player">
     <Transition name="fade3">
-      <div class="back-drop" :style="{'backgroundImage': 'url(' + playerStore.coverUrl + ')'}" v-if="playerStore.coverBlur && !playerStore.videoIsPlaying"></div>
+      <div class="back-drop" :style="{'backgroundImage': 'url(' + playerStore.coverUrl + ')'}" v-if="playerStore.coverBlur"></div>
     </Transition>
-    <Player class="player-container" :class="{'player-hide': playerStore.videoIsPlaying && !playerStore.playerShow, 'player-blur': playerStore.videoIsPlaying ,'cover-blur': playerStore.coverBlur}"></Player>
-    <Lyric class="lyric-container" :class="{'lyric-hide': playerStore.videoIsPlaying && !playerStore.playerShow}"></Lyric>
-    <Transition name="fade">
-      <MusicVideo class="music-video" v-if="playerStore.addMusicVideo"></MusicVideo>
-    </Transition>
-    <Transition name="fade2">
-      <PlayerVideo class="back-video" v-show="playerStore.videoIsPlaying" v-if="playerStore.currentMusicVideo && playerStore.musicVideo"></PlayerVideo>
-    </Transition>
+    <Player class="player-container" :class="{'cover-blur': playerStore.coverBlur}"></Player>
+    <Lyric class="lyric-container"></Lyric>
   </div>
 </template>
 

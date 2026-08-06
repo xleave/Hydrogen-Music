@@ -1,59 +1,36 @@
 import pinia from '../store/pinia'
 import { loadLastSong } from './player'
 import { scanMusic } from './locaMusic'
-import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
 import { useLocalStore } from '../store/localStore'
 import { storeToRefs } from 'pinia'
 import { insertCustomFontStyle } from './setFont'
 
-const userStore = useUserStore(pinia)
-const playerStore = usePlayerStore()
-const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime } = storeToRefs(playerStore)
-const localSotre = useLocalStore()
-const { updateUser } = userStore
+const playerStore = usePlayerStore(pinia)
+const localStore = useLocalStore(pinia)
+const { lyricSize, tlyricSize, rlyricSize, lyricInterludeTime } = storeToRefs(playerStore)
 
-export const initSettings = () => {
-    windowApi.getSettings().then(settings => {
-        quality.value = settings.music.level
-        lyricSize.value = settings.music.lyricSize
-        tlyricSize.value = settings.music.tlyricSize
-        rlyricSize.value = settings.music.rlyricSize
-        lyricInterludeTime.value = settings.music.lyricInterlude
-        localSotre.downloadedFolderSettings = settings.local.downloadFolder
-        localSotre.localFolderSettings = settings.local.localFolder
-        localSotre.quitApp = settings.other.quitApp
-        if (localSotre.downloadedFolderSettings && !localSotre.downloadedMusicFolder) {
-            scanMusic({ type: 'downloaded', refresh: false })
-        }
-        if (localSotre.localFolderSettings.length != 0 && !localSotre.localMusicFolder) {
-            scanMusic({ type: 'local', refresh: false })
-        }
-        if (!localSotre.downloadedFolderSettings && localSotre.downloadedMusicFolder) {
-            localSotre.downloadedMusicFolder = null
-            localSotre.downloadedFiles = null
-            windowApi.clearLocalMusicData('downloaded')
-        }
-        if (localSotre.localFolderSettings.length == 0 && localSotre.localMusicFolder) {
-            localSotre.localMusicFolder = null,
-                localSotre.localMusicList = null
-            localSotre.localMusicClassify = null
-            windowApi.clearLocalMusicData('local')
-        }
-        insertCustomFontStyle(settings.other.customFont)
-    })
-}
-export const getUserLikelist = () => {
-    if (userStore.user.userId)
-        getLikelist(userStore.user.userId).then(result => {
-            userStore.likelist = result.ids
-        })
-    else {
-        userStore.likelist = []
+export function initSettings() {
+  windowApi.getSettings().then((settings) => {
+    lyricSize.value = settings.music.lyricSize
+    tlyricSize.value = settings.music.tlyricSize
+    rlyricSize.value = settings.music.rlyricSize
+    lyricInterludeTime.value = settings.music.lyricInterlude
+    localStore.localFolderSettings = settings.local.localFolder
+    localStore.quitApp = settings.other.quitApp
+    if (localStore.localFolderSettings.length && !localStore.localMusicFolder) {
+      scanMusic({ type: 'local', refresh: false })
     }
+    if (!localStore.localFolderSettings.length) {
+      localStore.localMusicFolder = null
+      localStore.localMusicList = null
+      localStore.localMusicClassify = null
+    }
+    insertCustomFontStyle(settings.other.customFont)
+  })
 }
-//初始化
-export const init = () => {
-    initSettings()
-    loadLastSong()
+
+export function init() {
+  initSettings()
+  loadLastSong()
 }

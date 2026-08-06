@@ -1,39 +1,30 @@
 <script setup>
   import { useRouter } from 'vue-router'
   import LibraryType from '../components/LibraryType.vue'
-  import LibraryList from '../components/LibraryList.vue'
-  import DownloadList from '../components/DownloadList.vue'
   import LocalMusicList from '../components/LocalMusicList.vue'
-  import { useUserStore } from '../store/userStore'
   import { usePlayerStore } from '../store/playerStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { useLocalStore } from '../store/localStore';
   import { storeToRefs } from 'pinia'
   const router = useRouter()
   const libraryStore = useLibraryStore()
-  const { listType1, listType2, libraryChangeAnimation } = storeToRefs(libraryStore)
-  const userStore = useUserStore()
-  const { user } = storeToRefs(userStore)
+  const { libraryChangeAnimation } = storeToRefs(libraryStore)
   const playerStore = usePlayerStore()
   const localStore = useLocalStore()
-  const { downloadedMusicFolder, localMusicFolder, localMusicClassify, downloadedFolderSettings, localFolderSettings } = storeToRefs(localStore)
+  const { localMusicFolder, localMusicClassify, localFolderSettings } = storeToRefs(localStore)
 
 </script>
 
 <template>
   <div class="my-music" :class="{'my-music-full': !playerStore.songList}">
-    <div class="music-library" v-if="user">
+    <div class="music-library">
       <LibraryType class="library-type"></LibraryType>
-      <LibraryList v-show="listType1 != 2 && listType1 != 3" class="library-list"></LibraryList>
-      <DownloadList v-show="listType1 == 2 && listType2 == 0" class="download-list"></DownloadList>
-      <LocalMusicList :folderlist="downloadedMusicFolder" type="downloaded" v-if="downloadedMusicFolder" v-show="listType1 == 2 && listType2 == 1" class="local-list"></LocalMusicList>
-      <LocalMusicList :folderlist="localMusicFolder" :classifylist="localMusicClassify" type="local" v-if="localMusicFolder" v-show="listType1 == 3" class="local-list"></LocalMusicList>
-      <div class="no-folder" @click="router.push('/settings')" v-if="!downloadedFolderSettings && listType1 == 2 && listType2 == 1">去设置下载地址</div>
-      <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length == 0 && listType1 == 3">去设置扫描地址</div>
+      <LocalMusicList :folderlist="localMusicFolder" :classifylist="localMusicClassify" type="local" v-if="localMusicFolder" class="local-list"></LocalMusicList>
+      <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length == 0">去设置扫描地址</div>
     </div>
-      <div class="library-view" :class="{'library-view-nologin': !user}">
+      <div class="library-view">
         <router-view v-slot="{ Component }">
-          <keep-alive :include="['LibraryDetail','LibrarySongList','LibraryAlbumList','LibraryMVList']">
+          <keep-alive>
             <Transition name="fade">
               <component :is="Component" v-show="!libraryChangeAnimation"></component>
             </Transition>
@@ -211,9 +202,6 @@
           left: 0;
         }
       }
-    }
-    .library-view-nologin{
-      margin: 0;
     }
   }
   .my-music-full{

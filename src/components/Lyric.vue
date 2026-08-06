@@ -1,11 +1,11 @@
 <script setup>
   import { ref, watch, computed, onMounted } from 'vue'
-  import { changeProgress, musicVideoCheck, songTime } from '../utils/player'
+  import { changeProgress, songTime } from '../utils/player'
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia'
 
   const playerStore = usePlayerStore()
-  const { playing, progress, lyric, lyricsObjArr, songList, currentIndex, currentMusic, widgetState, lyricShow, lyricEle, isLyricDelay, lyricSize, tlyricSize, rlyricSize, lyricType, playerChangeSong, lyricInterludeTime, lyricBlur, playerShow, videoIsPlaying } = storeToRefs(playerStore)
+  const { playing, progress, lyric, lyricsObjArr, songList, currentIndex, currentMusic, widgetState, lyricShow, lyricEle, isLyricDelay, lyricSize, tlyricSize, rlyricSize, lyricType, playerChangeSong, lyricInterludeTime, lyricBlur } = storeToRefs(playerStore)
 
   const lyricScroll = ref()
   const lyricScrollArea = ref()
@@ -186,8 +186,6 @@
     lyricInterval.value = setInterval(() => {
       const lastIndex = lycCurrentIndex.value
       const currentSeek = currentMusic.value.seek()
-      musicVideoCheck(currentSeek)
-      if(!playerShow.value) return
       lycCurrentIndex.value =  lyricsObjArr.value.findIndex((item, index) => {
         if(index != length) {
           return (currentSeek + 0.2) * 1000 < (lyricsObjArr.value[index + 1].time) * 1000
@@ -325,7 +323,7 @@
             <span class="roma" :style="{'font-size': rlyricSize + 'px'}" v-if="item.rlyric && lyricType.indexOf('roma') != -1">{{item.rlyric}}</span>
             <span class="original" :style="{'font-size': lyricSize + 'px'}" v-if="lyricType.indexOf('original') != -1">{{item.lyric}}</span>
             <span class="trans" :style="{'font-size': tlyricSize + 'px'}" v-if="item.tlyric && lyricType.indexOf('trans') != -1">{{item.tlyric}}</span>
-            <div class="hilight" :class="{'hilight-active': index == lycCurrentIndex}" :style="{backgroundColor: videoIsPlaying ? 'rgba(0, 0, 0, 0.8)' : 'black'}"></div>
+            <div class="hilight" :class="{'hilight-active': index == lycCurrentIndex}"></div>
           </div>
           <div v-if="lycCurrentIndex != -1 && interludeIndex == index" class="music-interlude" :class="{'music-interlude-in': interludeAnimation}">
             <div class="interlude-left">
