@@ -4,7 +4,6 @@ mod storage;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use lofty::{
     file::TaggedFileExt,
-    picture::MimeType,
     read_from_path,
     tag::ItemKey,
 };
@@ -26,18 +25,27 @@ fn read_cover(file_path: String) -> Result<Option<String>, String> {
     let Some(picture) = picture else {
         return Ok(None);
     };
-    let mime = match picture.mime_type() {
-        Some(MimeType::Png) => "image/png",
-        Some(MimeType::Jpeg) => "image/jpeg",
-        Some(MimeType::Tiff) => "image/tiff",
-        Some(MimeType::Bmp) => "image/bmp",
-        Some(MimeType::Gif) => "image/gif",
-        _ => "application/octet-stream",
-    };
+    let mime = cover_mime(picture.data());
     Ok(Some(format!(
         "data:{mime};base64,{}",
         STANDARD.encode(picture.data())
     )))
+}
+
+fn cover_mime(data: &[u8]) -> &'static str {
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if data.starts_with(b"\xff\xd8\xff") {
+        "image/jpeg"
+    } else if data.starts_with(b"GIF8") {
+        "image/gif"
+    } else if data.starts_with(b"BM") {
+        "image/bmp"
+    } else if data.starts_with(b"II*\0") || data.starts_with(b"MM\0*") {
+        "image/tiff"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 #[tauri::command]
