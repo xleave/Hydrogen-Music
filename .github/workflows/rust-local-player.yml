@@ -8,12 +8,13 @@ on:
 
 jobs:
   check:
+    name: Frontend and Rust checks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Tauri system dependencies
@@ -21,3 +22,27 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  fedora-rpm:
+    name: Fedora 42 RPM
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Fedora build dependencies
+        run: >-
+          dnf install -y
+          nodejs npm
+          gcc gcc-c++ make
+          webkit2gtk4.1-devel openssl-devel
+          curl wget file
+          libappindicator-gtk3-devel librsvg2-devel libxdo-devel
+          rpm-build patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run tauri -- build --bundles rpm
+      - uses: actions/upload-artifact@v6
+        with:
+          name: hydrogen-music-fedora-rpm
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error

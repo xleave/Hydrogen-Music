@@ -14,7 +14,7 @@ Hydrogen Music 是一款面向本地音乐库的桌面播放器。项目保留�
 - 读取音频文件旁的同名 UTF-8 `.lrc` 歌词
 - 保存应用设置、播放队列和上次播放状态
 - 支持顺序播放、列表循环、单曲循环和随机播放
-- 支持 Windows、Linux 和 macOS 的 Tauri 桌面构建
+- 支持 Windows、Linux 和 macOS 的 Tauri 桌面构建，并提供 Fedora RPM 构建产物
 
 歌词读取顺序为：
 
@@ -71,13 +71,14 @@ Vue 3 原版 UI
 - 设置和播放队列由 Rust 写入系统应用数据目录
 - 通过 Tauri 本地资源协议加载音乐文件，不启动本地 Web 服务
 - 保留原版 `.vue`、CSS、图片和字体，不进行 UI 重构
-- 增加 GitHub Actions，对前端生产构建和 Rust `cargo check` 同时验证
+- GitHub Actions 使用 Node.js 24 执行前端生产构建和 Rust `cargo check`
+- 在 Fedora 42 容器中构建 RPM，并将安装包作为 CI 产物上传
 
 ## 开发环境
 
 需要：
 
-- Node.js 18 或更高版本
+- Node.js 24
 - Rust stable
 - 当前平台对应的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)
 
@@ -110,6 +111,27 @@ cargo check --manifest-path src-tauri/Cargo.toml
 ```bash
 npm run dist
 ```
+
+## Fedora RPM
+
+每次向 `agent/rust-local-player` 分支推送提交时，GitHub Actions 都会在 Fedora 42 容器中完成原生 RPM 构建。构建成功后，可在对应的 Actions 运行页面下载名为 `hydrogen-music-fedora-rpm` 的产物。
+
+在 Fedora 本机编译时，先安装系统依赖：
+
+```bash
+sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
+  libappindicator-gtk3-devel librsvg2-devel libxdo-devel \
+  gcc gcc-c++ make rpm-build patchelf nodejs npm
+```
+
+然后安装前端依赖并构建 RPM：
+
+```bash
+npm ci
+npm run tauri -- build --bundles rpm
+```
+
+生成的安装包位于 `src-tauri/target/release/bundle/rpm/`。
 
 ## 隐私边界
 
