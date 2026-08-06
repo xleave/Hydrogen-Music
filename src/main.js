@@ -8,6 +8,9 @@ import { installWindowApi } from './platform/windowApi'
 
 installWindowApi()
 
+// 禁用 WebView 默认右键菜单（浏览器右键）
+document.addEventListener('contextmenu', (e) => e.preventDefault())
+
 async function bootstrap() {
   const [{ default: App }, { default: router }, { init }, { default: lazy }] = await Promise.all([
     import('./App.vue'),
