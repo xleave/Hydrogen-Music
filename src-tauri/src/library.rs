@@ -94,12 +94,6 @@ fn scan_directory(path: &Path, count: &mut usize) -> Result<Node, String> {
         }
     }
 
-    let date = tag.and_then(Accessor::date).map(|value| value.to_string());
-    let year = date
-        .as_deref()
-        .and_then(|value| value.get(..4))
-        .and_then(|value| value.parse().ok());
-
     Ok(Node {
         name: path
             .file_name()
@@ -158,6 +152,11 @@ fn read_track(path: &Path) -> Result<Node, String> {
                 || value.get_string(ItemKey::UnsyncLyrics).is_some()
         })
         || path.with_extension("lrc").is_file();
+    let date = tag.and_then(Accessor::date).map(|value| value.to_string());
+    let year = date
+        .as_deref()
+        .and_then(|value| value.get(..4))
+        .and_then(|value| value.parse().ok());
 
     Ok(Node {
         name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
