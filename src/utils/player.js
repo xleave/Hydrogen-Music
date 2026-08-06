@@ -1,9 +1,8 @@
 import pinia from '../store/pinia'
 import { Howl, Howler } from 'howler'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import dayjs from 'dayjs';
 import { noticeOpen } from './dialog'
-import { checkMusic, getMusicUrl, likeMusic, getLyric } from '../api/song'
-import { getLikelist } from '../api/user'
 import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
 import { useLibraryStore } from '../store/libraryStore'
@@ -51,7 +50,7 @@ export function play(url, autoplay) {
         autoplay: autoplay,
         html5: true,
         preload: true,
-        format: ['mp3', 'flac'],
+        format: ['mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus'],
         loop: (playMode.value == 2),
         volume: volume.value,
         xhr: {
@@ -258,39 +257,18 @@ export async function getSongUrl(id, index, autoplay, isLocal) {
             localBase64Img.value = base64
             setSongToWindows()
         })
-        play(songList.value[currentIndex.value].url, autoplay)
+        play(convertFileSrc(songList.value[currentIndex.value].url), autoplay)
         lyric.value = null
         lyricsObjArr.value = null
-        //获取本地歌词（已禁用）
-        // const localLyric = await getLocalLyric(songList.value[currentIndex.value].url)
-        // if(localLyric) {
-        //     lyric.value = {lrc:{lyric:localLyric}}
-        // }
+        const localLyric = await getLocalLyric(songList.value[currentIndex.value].url)
+        if(localLyric) lyric.value = {lrc:{lyric:localLyric}}
         if(!lyricShow.value && !widgetState.value) {
             lyricShow.value = true
             playerChangeSong.value = false
         }
         return
     }
-    setSongToWindows()
-    await checkMusic(id).then(result => {
-        if(result.success == true) {
-            getMusicUrl(id, quality.value).then(songInfo => {
-                play(songInfo.data[0].url, autoplay)
-                setSongLevel(songInfo.data[0].level)
-            })
-            getLyric(id).then(songLiric => {
-                lyric.value = songLiric
-            })
-        } else {
-            noticeOpen('当前歌曲无法播放', 2)
-            clearInterval(musicProgress)
-            playing.value = false
-            currentMusic.value = null
-            lyric.value = null
-            playNext()
-        }
-    })
+    noticeOpen('本地版仅播放本地音乐', 2)
 }
 
 export function startMusic() {
@@ -448,29 +426,8 @@ function getRandomInt(min, max) { // 获取min到max的一个随机数，包含m
     return Math.floor(Math.random() * (max - min + 1) + min)
 }
 
-export function likeSong(like) {
-    likeMusic(songId.value, like).then(result => {
-        if(result.code == 200) {
-            getLikelist(userStore.user.userId).then(res => {
-                userStore.likelist = res.ids
-            })
-            otherStore.addPlaylistShow = false
-            libraryStore.needTimestamp.push('/playlist/detail')
-            libraryStore.needTimestamp.push('/playlist/track/all')
-            let noCacheTimer = null
-            if(noCacheTimer) clearTimeout(noCacheTimer)
-            noCacheTimer = setTimeout(() => {
-                libraryStore.needTimestamp.splice(needTimestamp.value.indexOf('/playlist/detail'), 1)
-                libraryStore.needTimestamp.splice(needTimestamp.value.indexOf('/playlist/track/all'), 1)
-                clearTimeout(noCacheTimer)
-            }, 130000);
-            if(libraryStore.listType1 == 0 && libraryStore.listType2 == 0) {
-            document.getElementById('myPlaylist').click()
-            }
-        } else {
-            noticeOpen("喜欢/取消喜欢 音乐失败！", 2)
-        }
-    })
+export function likeSong() {
+    noticeOpen('本地版不提供云端收藏', 2)
 }
 
 export function addToNext(nextSong, autoplay) {

@@ -1,8 +1,6 @@
 import pinia from '../store/pinia'
-import { isLogin } from '../utils/authority'
 import { loadLastSong } from './player'
 import { scanMusic } from './locaMusic'
-import { getUserProfile, getLikelist } from '../api/user'
 import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
 import { useLocalStore } from '../store/localStore'
@@ -58,12 +56,4 @@ export const getUserLikelist = () => {
 export const init = () => {
     initSettings()
     loadLastSong()
-    if (isLogin()) {
-        getUserProfile().then(result => {
-            updateUser(result.profile)
-            getUserLikelist()
-        })
-    } else {
-        window.localStorage.clear()
-    }
 }
