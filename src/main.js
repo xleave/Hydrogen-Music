@@ -1,16 +1,26 @@
 import { createApp } from 'vue'
-import App from './App.vue'
-import router from './router/router.js'
 import pinia from './store/pinia'
-import { init } from './utils/initApp'
-import lazy from './utils/lazy'
 import './style.css'
 import 'normalize.css'
 import './assets/css/common.css'
 import './assets/css/fonts.css'
-const app = createApp(App)
-app.use(router)
-app.use(pinia)
-app.directive('lazy', lazy)
-app.mount('#app')
-init()
+import { installWindowApi } from './platform/windowApi'
+
+installWindowApi()
+
+async function bootstrap() {
+  const [{ default: App }, { default: router }, { init }, { default: lazy }] = await Promise.all([
+    import('./App.vue'),
+    import('./router/router.js'),
+    import('./utils/initApp'),
+    import('./utils/lazy'),
+  ])
+  const app = createApp(App)
+  app.use(router)
+  app.use(pinia)
+  app.directive('lazy', lazy)
+  app.mount('#app')
+  init()
+}
+
+bootstrap()

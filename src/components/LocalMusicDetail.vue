@@ -41,8 +41,6 @@
   const openMenu = (e, item) => {
     otherStore.contextMenuShow = true
     otherStore.selectedItem = item
-    otherStore.menuTree = otherStore.tree4
-    
     const { clientX, clientY } = e
     const menuList = document.getElementById('menu')
     const screenWidth = document.body.clientWidth

@@ -17,7 +17,6 @@ export const usePlayerStore = defineStore('playerStore', {
             songId: null,
             currentIndex: 0,
             time: 0, //歌曲总时长
-            quality: null,
             playlistWidgetShow: false,
             playerChangeSong: false, //player页面切换歌曲更换歌名动画,
             lyric: null,
@@ -32,12 +31,6 @@ export const usePlayerStore = defineStore('playerStore', {
             isLyricDelay: true, //调整进度的时候禁止赋予delay属性
             localBase64Img: null, //如果是本地歌曲，获取封面
             forbidLastRouter: false, //在主动跳转router时禁用回到上次离开的路由的地址功能
-            musicVideo: false,
-            addMusicVideo: false,
-            currentMusicVideo: null,
-            musicVideoDOM: null,
-            videoIsPlaying: false,
-            playerShow: true,
             coverBlur: false,
             lyricBlur: false,
             coverUrl: null,
@@ -47,6 +40,6 @@ export const usePlayerStore = defineStore('playerStore', {
     },
     persist: {
         storage: localStorage,
-        paths: ['progress','volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','musicVideo','coverBlur','lyricBlur']
+        paths: ['progress','volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','lyricType','coverBlur','lyricBlur']
     },
 })

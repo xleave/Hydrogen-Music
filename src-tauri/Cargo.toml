@@ -1,0 +1,22 @@
+[package]
+name = "hydrogen-music"
+version = "0.7.0"
+description = "A local-first music player"
+authors = ["xleave"]
+edition = "2021"
+
+[lib]
+name = "hydrogen_music_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+lofty = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"

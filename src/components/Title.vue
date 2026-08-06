@@ -1,16 +1,13 @@
 <script setup>
   import { useRouter } from 'vue-router'
-  import VueSlider from 'vue-slider-component'
-  import { songTime2, changeProgress } from '../utils/player';
   import { usePlayerStore } from '../store/playerStore';
   import { storeToRefs } from 'pinia';
   const router = useRouter()
   const playerStore = usePlayerStore()
-  const { widgetState, lyricShow, musicVideo, videoIsPlaying, songList, currentIndex, localBase64Img, progress, time, playerShow } = storeToRefs(playerStore)
+  const { widgetState, lyricShow } = storeToRefs(playerStore)
 
   const backHome = () => {
     if(widgetState.value) router.push('/')
-    if(videoIsPlaying.value) videoIsPlaying.value = false
     widgetState.value = true
     lyricShow.value = false
   }
@@ -21,25 +18,7 @@
 
 <template>
   <div class="title-container">
-    <Transition name=fade>
-      <div class="title-logo" @click="backHome()" v-show="playerShow">Hydrogen</div>
-    </Transition>
-    <div class="title-player" :class="{'title-player-in': videoIsPlaying && !playerShow}" v-if="musicVideo && songList" @click="playerShow = true">
-      <div class="player-content" :class="{'player-content-in': videoIsPlaying && !playerShow}">
-        <div class="cover">
-          <img v-if="songList[currentIndex].type != 'local'" :src="songList[currentIndex].al.picUrl + '?param=100y100'" alt="">
-          <img v-else v-show="localBase64Img" :src="localBase64Img" alt="">
-          <img v-if="songList[currentIndex].type == 'local' && !localBase64Img" src="http://p3.music.126.net/UeTuwE7pvjBpypWLudqukA==/3132508627578625.jpg?param=140y140" alt="">
-        </div>
-        <div class="music-info">
-          <span class="music-name">{{songList[currentIndex].name || songList[currentIndex].localName}}</span>
-          <div class="music-time">
-            <vue-slider id='widget-progress' class="music-progress" @click.stop="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
-            <span class="remaining-time">{{songTime2(time - progress)}}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div class="title-logo" @click="backHome()">Hydrogen</div>
   </div>
 </template>
 

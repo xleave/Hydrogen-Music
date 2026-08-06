@@ -1,44 +1,15 @@
 <script setup>
 import { ref, onActivated } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router';
-import { logout } from '../api/user'
 import { noticeOpen, dialogOpen } from "../utils/dialog";
 import { initSettings } from '../utils/initApp';
-import { getVipInfo } from '../api/user'
-import { isLogin } from '../utils/authority';
-import { useUserStore } from '../store/userStore';
 import { usePlayerStore } from '../store/playerStore';
 import { insertCustomFontStyle } from '../utils/setFont';
 import Selector from '../components/Selector.vue'
 
 const router = useRouter()
-const userStore = useUserStore()
 const playerStore = usePlayerStore()
 
-const vipInfo = ref(null)
-const musicLevel = ref('standard')
-const musicLevelOptions = ref([
-    {
-        label: '标准',
-        value: 'standard'
-    },
-    {
-        label: '较高',
-        value: 'higher'
-    },
-    {
-        label: '极高',
-        value: 'exhigh'
-    },
-    {
-        label: '无损',
-        value: 'lossless'
-    },
-    {
-        label: 'Hi-Res',
-        value: 'hires'
-    },
-])
 const lyricSize = ref(20)
 const tlyricSize = ref(13)
 const rlyricSize = ref(12)
@@ -55,8 +26,6 @@ const quitAppOptions = ref([
         value: 'quit'
     }
 ])
-const downloadFolder = ref(null)
-const videoFolder = ref(null)
 const localFolder = ref([])
 const shortcutsList = ref(null)
 const selectedShortcut = ref(null)
@@ -64,21 +33,13 @@ const newShortcut = ref([])
 const shortcutCharacter = ['=', '-', '~', '@', '#', '$', '[', ']', ';', "'", ',', '.', '/', '!'];
 const customFont = ref('')
 
-if (isLogin()) {
-    getVipInfo().then(result => {
-        vipInfo.value = result.data
-    })
-}
 onActivated(() => {
     windowApi.getSettings().then(settings => {
         if (!settings) return
-        musicLevel.value = settings.music.level
         lyricSize.value = settings.music.lyricSize
         tlyricSize.value = settings.music.tlyricSize
         rlyricSize.value = settings.music.rlyricSize
         lyricInterlude.value = settings.music.lyricInterlude
-        videoFolder.value = settings.local.videoFolder
-        downloadFolder.value = settings.local.downloadFolder
         localFolder.value = settings.local.localFolder
         shortcutsList.value = settings.shortcuts
         globalShortcuts.value = settings.other.globalShortcuts
@@ -90,15 +51,12 @@ onActivated(() => {
 const setAppSettings = () => {
     let settings = {
         music: {
-            level: musicLevel.value,
             lyricSize: lyricSize.value,
             tlyricSize: tlyricSize.value,
             rlyricSize: rlyricSize.value,
             lyricInterlude: lyricInterlude.value
         },
         local: {
-            videoFolder: videoFolder.value,
-            downloadFolder: downloadFolder.value,
             localFolder: localFolder.value
         },
         shortcuts: shortcutsList.value,
@@ -123,17 +81,9 @@ const routerChange = () => {
 }
 
 const selectFolder = (type) => {
-    if (type == 'download') {
-        windowApi.openFile().then(path => {
-            downloadFolder.value = path
-        })
-    } else if (type == 'local') {
+    if (type == 'local') {
         windowApi.openFile().then(path => {
             if (path && localFolder.value.indexOf(path) == -1) localFolder.value.push(path)
-        })
-    } else if (type == 'video') {
-        windowApi.openFile().then(path => {
-            videoFolder.value = path
         })
     }
 }
@@ -151,9 +101,6 @@ const changeShortcut = (id, type) => {
     }
     windowApi.unregisterShortcuts()
 }
-/**
- * author: yesplaymusic
- */
 const updateShortcut = () => {
     let shortcut = [];
     newShortcut.value.map(e => {
@@ -204,26 +151,6 @@ const inputShortcut = (k) => {
 const setDefaultShortcuts = () => {
     shortcutsList.value = [{ id: 'play', name: '播放/暂停', shortcut: 'CommandOrControl+P', globalShortcut: 'CommandOrControl+Alt+P', }, { id: 'last', name: '上一首', shortcut: 'CommandOrControl+Left', globalShortcut: 'CommandOrControl+Alt+Left', }, { id: 'next', name: '下一首', shortcut: 'CommandOrControl+Right', globalShortcut: 'CommandOrControl+Alt+Right', }, { id: 'volumeUp', name: '增加音量', shortcut: 'CommandOrControl+Up', globalShortcut: 'CommandOrControl+Alt+Up', }, { id: 'volumeDown', name: '减少音量', shortcut: 'CommandOrControl+Down', globalShortcut: 'CommandOrControl+Alt+Down', }, { id: 'processForward', name: '快进(3s)', shortcut: 'CommandOrControl+]', globalShortcut: 'CommandOrControl+Alt+]' }, { id: 'processBack', name: '后退(3s)', shortcut: 'CommandOrControl+[', globalShortcut: 'CommandOrControl+Alt+[' },]
 }
-const clearMusicVideo = () => {
-    windowApi.clearUnusedVideo().then(result => {
-        if (result == 'noSavePath') {
-            noticeOpen('请先在设置中设置音乐视频缓存目录', 2)
-            return
-        }
-        else if (result) noticeOpen('清除完毕', 3)
-        else noticeOpen('删除失败', 3)
-    })
-}
-const setMusicVideo = () => {
-    if (!playerStore.musicVideo)
-        dialogOpen('确定开启', '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？', openMusicVideo)
-    else
-        openMusicVideo(true)
-}
-const openMusicVideo = (flag) => {
-    if (flag)
-        playerStore.musicVideo = !playerStore.musicVideo
-}
 const setCoverBlur = () => {
     if (!playerStore.coverBlur)
         dialogOpen('确定开启', '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？', openCoverBlur)
@@ -242,20 +169,6 @@ const setLyricBlur = () => {
 const openLyricBlur = (flag) => {
     if (flag) playerStore.lyricBlur = !playerStore.lyricBlur
 }
-const userLogout = () => {
-    if (isLogin()) {
-        logout().then(result => {
-            if (result.code == 200) {
-                window.localStorage.clear()
-                userStore.user = null
-                userStore.biliUser = null
-                router.push('/')
-                noticeOpen("已退出账号", 2)
-            }
-            else noticeOpen("退出登录失败", 2)
-        })
-    } else noticeOpen("您已退出账号", 2)
-}
 const save = () => {
     selectedShortcut.value = null
     setAppSettings()
@@ -263,7 +176,7 @@ const save = () => {
     noticeOpen("设置已保存", 2)
 }
 const toGithub = () => {
-    windowApi.toRegister("https://github.com/Kaidesuyo/Hydrogen-Music")
+    windowApi.toRegister("https://github.com/xleave/Hydrogen-Music")
 }
 
 const setCustomFont = () => {
@@ -286,33 +199,11 @@ const setCustomFont = () => {
         </div>
         <div class="settings-container">
             <h1 class="settings-title">设置</h1>
-            <div class="settings-user-info" v-if="isLogin()">
-                <div class="user">
-                    <div class="user-head">
-                        <img :src="userStore.user.avatarUrl + '?param=300y300'" alt="">
-                    </div>
-                    <div class="user-info">
-                        <div class="user-name">{{ userStore.user.nickname }}</div>
-                        <div class="user-vip" v-if="vipInfo && userStore.user.vipType != 0">
-                            <img :src="vipInfo.redVipDynamicIconUrl" alt="">
-                        </div>
-                    </div>
-                </div>
-                <div class="logout" @click="userLogout()">
-                    <span>退出</span>
-                </div>
-            </div>
             <div class="settings">
                 <div class="settings-item">
                     <h2 class="item-title">音乐</h2>
                     <div class="line"></div>
                     <div class="item-options">
-                        <div class="option">
-                            <div class="option-name">音质选择</div>
-                            <div class="option-operation">
-                                <Selector v-model="musicLevel" :options="musicLevelOptions"></Selector>
-                            </div>
-                        </div>
                         <div class="option">
                             <div class="option-name">开启背景封面模糊</div>
                             <div class="option-operation">
@@ -361,46 +252,12 @@ const setCustomFont = () => {
                                 <input v-model="lyricInterlude" name="lyricInterlude">
                             </div>
                         </div>
-                        <div class="option">
-                            <div class="option-name">开启音乐视频功能</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="setMusicVideo()">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.musicVideo }">
-                                        {{ playerStore.musicVideo ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="playerStore.musicVideo"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option" v-if="playerStore.musicVideo">
-                            <div class="option-name">删除所有未被使用的音乐视频</div>
-                            <div class="option-operation">
-                                <div class="button" @click="clearMusicVideo()">清除</div>
-                            </div>
-                        </div>
                     </div>
                 </div>
                 <div class="settings-item">
                     <h2 class="item-title">本地</h2>
                     <div class="line"></div>
                     <div class="item-options">
-                        <div class="option" v-if="playerStore.musicVideo">
-                            <div class="option-name">音乐视频缓存</div>
-                            <div class="select-download-folder">
-                                <div class="selected-folder" :title="downloadFolder">{{ videoFolder ? videoFolder : '待选择' }}
-                                </div>
-                                <div class="select-option" @click="selectFolder('video')">选择</div>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">下载目录</div>
-                            <div class="select-download-folder">
-                                <div class="selected-folder" :title="downloadFolder">{{ downloadFolder ? downloadFolder :
-                                    '待选择' }}</div>
-                                <div class="select-option" @click="selectFolder('download')">选择</div>
-                            </div>
-                        </div>
                         <div class="option">
                             <div class="option-name">本地目录</div>
                             <div class="local-folder">
@@ -454,30 +311,6 @@ const setCustomFont = () => {
                     <div class="line"></div>
                     <div class="item-options">
                         <div class="option">
-                            <div class="option-name">开启首页页面</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="userStore.homePage = !userStore.homePage">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': userStore.homePage }">
-                                        {{ userStore.homePage ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="userStore.homePage"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">开启云盘页面</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="userStore.cloudDiskPage = !userStore.cloudDiskPage">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': userStore.cloudDiskPage }">
-                                        {{ userStore.cloudDiskPage ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="userStore.cloudDiskPage"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option">
                             <div class="option-name">自定义字体</div>
                             <div class="custom-font local-folder">
                                 <!-- <div class="custom-font-path">{{customFont ? customFont : '未设置'}}</div> -->
@@ -498,8 +331,8 @@ const setCustomFont = () => {
                 <div class="app-icon">
                     <img src="../assets/icon/icon.ico" alt="">
                 </div>
-                <div class="version">V0.5.0</div>
-                <div class="app-author" @click="toGithub()">Made by Kaidesuyo</div>
+                <div class="version">V0.7.0</div>
+                <div class="app-author" @click="toGithub()">Made by xleave</div>
             </div>
         </div>
     </div>

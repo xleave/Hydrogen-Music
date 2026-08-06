@@ -1,15 +1,8 @@
 import { defineStore } from "pinia";
-import { noticeOpen } from "../utils/dialog";
 
 export const useLocalStore = defineStore('localStore', {
     state: () => {
         return {
-            isFirstDownload: true,
-            isDownloading: false,
-            downloadList: [],
-            downloadedFolderSettings: null,
-            downloadedMusicFolder: null,
-            downloadedFiles: null,
             localFolderSettings: [],
             localMusicFolder: null,
             localMusicList: null,
@@ -27,31 +20,6 @@ export const useLocalStore = defineStore('localStore', {
         }
     },
     actions: {
-        //对象数组去重(根据batch参数去重)
-        removedup(arr, batch) {
-            if (!Array.isArray(arr)) {
-              return arr;
-            }
-            if (arr.length == 0) {
-              return [];
-            }
-            let obj = {};
-            let uniqueArr = arr.reduce(function (total, item) {
-              obj[item[batch]] ? '' : (obj[item[batch]] = true && total.push(item));
-              return total;
-            }, []);
-            return uniqueArr;
-        },
-        updateDownloadList(list) {
-            if(!this.downloadedFolderSettings) {noticeOpen("请先在设置中设置下载目录", 2);return}
-            this.downloadList = this.downloadList.concat(list)
-            this.downloadList = this.removedup(this.downloadList, 'id')
-            if(!this.isDownloading && this.isFirstDownload) {
-                windowApi.startDownload()
-                this.isFirstDownload = false
-            }
-            noticeOpen('已添加到下载列表', 2)
-        },
         getSongs(arr) {
             arr.forEach(song => {
               if(song.children) this.getSongs(song.children)
@@ -80,8 +48,6 @@ export const useLocalStore = defineStore('localStore', {
         updateLocalMusicDetail(type, query, id) {
             this.currentType = type
             if(type == 'localFiles') {
-                if(query.type == 'downloaded')
-                    this.getFolderSongs(this.downloadedFiles, query.name)
                 if(query.type == 'local')
                     this.getFolderSongs(this.localMusicList, query.name)
             }

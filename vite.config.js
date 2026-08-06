@@ -9,7 +9,8 @@ export default defineConfig({
   manifest:true,
   resolve: {
     alias: {
-      '@': resolve(__dirname, './src')
+      '@': resolve(__dirname, './src'),
+      'axios': resolve(__dirname, './src/platform/noNetwork.js')
     }
   },
   optimizeDeps: {

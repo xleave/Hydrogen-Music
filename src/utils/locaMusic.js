@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import { noticeOpen } from './dialog'
 
 const localStore = useLocalStore(pinia)
-const { downloadedMusicFolder, downloadedFiles, localMusicFolder, localMusicList, localMusicClassify, isRefreshLocalFile } = storeToRefs(localStore)
+const { localMusicFolder, localMusicList, localMusicClassify, isRefreshLocalFile } = storeToRefs(localStore)
 let artistArr = []
 let albumArr = []
 
@@ -61,10 +61,6 @@ windowApi.localMusicCount((event, count) => {
     noticeOpen('已扫描' + count + '首', 2)
 })
 windowApi.localMusicFiles((event, localData) => {
-    if(localData.type == 'downloaded') {
-        downloadedMusicFolder.value = localData.dirTree
-        downloadedFiles.value = localData.locaFilesMetadata
-    }
     if(localData.type == 'local') {
         localMusicFolder.value = localData.dirTree
         localMusicList.value = localData.locaFilesMetadata

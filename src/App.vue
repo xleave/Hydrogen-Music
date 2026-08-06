@@ -1,26 +1,16 @@
 <script setup>
   import Home from './views/Home.vue'
   import Title from './components/Title.vue'
-  import SearchInput from './components/SearchInput.vue'
   import WindowControl from './components/WindowControl.vue'
   import MusicWidget from './components/MusicWidget.vue'
   import MusicPlayer from './views/MusicPlayer.vue'
-  import VideoPlayer from './components/VideoPlayer.vue'
   import ContextMenu from './components/ContextMenu.vue'
   import GlobalDialog from './components/GlobalDialog.vue'
   import GlobalNotice from './components/GlobalNotice.vue'
-  import Update from './components/Update.vue'
 
   import { usePlayerStore } from './store/playerStore'
-  import { useOtherStore } from './store/otherStore'
 
   const playerStore = usePlayerStore()
-  const otherStore = useOtherStore()
-
-  windowApi.checkUpdate((event, version) => {
-    otherStore.toUpdate = true
-    otherStore.newVersion = version
-  })
 </script>
 
 <template>
@@ -31,7 +21,6 @@
   </div>
   <div class="globalWidget">
     <Title class="widget-title"></Title>
-    <SearchInput class="widget-search"></SearchInput>
   </div>
   <div class="dragBar">
     <WindowControl class="window-control"></WindowControl>
@@ -46,11 +35,6 @@
       <MusicPlayer></MusicPlayer>
     </div>
   </Transition>
-  <Transition name="video">
-    <div class="videoPlayer" v-if="otherStore.videoPlayerShow">
-      <VideoPlayer></VideoPlayer>
-    </div>
-  </Transition>
   <div class="contextMune">
     <ContextMenu></ContextMenu>
   </div>
@@ -60,11 +44,6 @@
   <div class="globalNotice">
     <GlobalNotice></GlobalNotice>
   </div>
-  <Transition name="fade">
-    <div class="update" v-if="otherStore.toUpdate">
-      <Update></Update>
-    </div>
-  </Transition>
 </template>
 
 <style lang="scss">
@@ -110,9 +89,6 @@
         cursor: pointer;
       }
     }
-    .widget-search{
-      margin-left: 30Px;
-    }
   }
   .dragBar{
     width: 100%;
@@ -146,22 +122,8 @@
     top: 0;
     left: 0;
   }
-  .videoPlayer{
-    width: 100%;
-    height: 100%;
-    position: fixed;
-    pointer-events: none;
-    z-index: 999;
-  }
   .globalNotice{
     bottom: 120Px;
-    position: fixed;
-    z-index: 999;
-  }
-  .update{
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.1);
     position: fixed;
     z-index: 999;
   }
