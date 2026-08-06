@@ -24,9 +24,12 @@ export function loadLastSong() {
                 songList.value = list.songList
                 shuffledList.value = list.shuffledList
             }
-            if(songList.value) {
+            if(songList.value && songList.value.length > 0 && currentIndex.value < songList.value.length) {
                 if(songList.value[currentIndex.value].type == 'local') getSongUrl(songList.value[currentIndex.value].id, currentIndex.value, false, true)
                 else getSongUrl(songList.value[currentIndex.value].id, currentIndex.value, false, false)
+            } else {
+                // 无上次播放记录（全新安装），直接重置 loadLast，避免首次播放时被静音
+                loadLast = false
             }
         })
     }
@@ -37,6 +40,11 @@ export function play(url, autoplay) {
         currentMusic.value.unload()
         Howler.unload()
     }
+    // 捕获当前的 loadLast 状态，避免 load/play 事件竞态问题
+    const isResumingLastSong = loadLast
+    if(isResumingLastSong) {
+        loadLast = false
+    }
     currentMusic.value = new Howl({
         src: url,
         autoplay: autoplay,
@@ -44,7 +52,7 @@ export function play(url, autoplay) {
         preload: true,
         format: ['mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus'],
         loop: (playMode.value == 2),
-        volume: volume.value,
+        volume: isResumingLastSong ? 0 : volume.value,
         xhr: {
             method: 'GET',
             withCredentials: true,
@@ -60,15 +68,14 @@ export function play(url, autoplay) {
     })
     currentMusic.value.once('load', () => {
         time.value = Math.floor(currentMusic.value.duration())
-        if(loadLast) {
-            currentMusic.value.volume(0)
+        if(isResumingLastSong) {
+            // 恢复上次播放进度：seek 到上次位置，音量已在初始化时设为0
             currentMusic.value.seek(progress.value)
-            loadLast = false
         }
         playerChangeSong.value = false
     })
     currentMusic.value.on('play', () => {
-        currentMusic.value.fade(0,volume.value,200)
+        currentMusic.value.fade(0, volume.value, 200)
         startProgress()
         playing.value = true
         windowApi.playOrPauseMusicCheck(playing.value)
@@ -77,7 +84,7 @@ export function play(url, autoplay) {
         clearInterval(musicProgress)
         playing.value = false
         windowApi.playOrPauseMusicCheck(playing.value)
-        currentMusic.value.fade(volume.value,0,200)
+        currentMusic.value.fade(volume.value, 0, 200)
     })
 }
 
@@ -165,14 +172,16 @@ export function addSong(id, index, autoplay, isLocal) {
     isLocal = true
     
     if(currentMusic.value && volume.value != 0) {
-        currentMusic.value.fade(volume.value,0,200)
-        currentMusic.value.once('fade', () => {
-            getSongUrl(id, index, autoplay, isLocal)
-            return
-        })
-        if(currentMusic.value.state() == 'loading' || currentMusic.value.state() == 'unloaded') {
+        const state = currentMusic.value.state()
+        if(state == 'loading' || state == 'unloaded') {
+            // 当前音乐处于加载/未加载状态，直接卸载并播放新歌，无需等待 fade
             currentMusic.value.unload()
             getSongUrl(id, index, autoplay, isLocal)
+        } else {
+            currentMusic.value.fade(volume.value, 0, 200)
+            currentMusic.value.once('fade', () => {
+                getSongUrl(id, index, autoplay, isLocal)
+            })
         }
     } else {
         getSongUrl(id, index, autoplay, isLocal)
