@@ -23,3 +23,7 @@ dist/*
 *.njsproj
 *.sln
 *.sw?
+
+# Rust build artifacts
+src-tauri/target/
+src-tauri/gen/
