@@ -1,5 +1,5 @@
 import { markRaw } from 'vue'
-import { Howl } from 'howler'
+import { Howl, Howler } from 'howler'
 import { playerRefs } from './state'
 import {
   loadLocalLyrics,
@@ -42,6 +42,11 @@ const audioTypes = {
 
 function audioFormat(filePath) {
   return filePath.split('.').pop()?.toLowerCase() || 'mp3'
+}
+
+function resumeAudioContext() {
+  Howler.volume(volume.value)
+  return Howler.ctx?.resume?.() || Promise.resolve()
 }
 
 export function registerNextTrackHandler(handler) {
@@ -100,7 +105,8 @@ export function play(url, autoplay, format) {
     src: [url],
     format: [format],
     autoplay,
-    html5: true,
+    html5: false,
+    pool: 1,
     preload: true,
     loop: playMode.value === 2,
     volume: volume.value,
@@ -182,6 +188,10 @@ export function addSong(id, index, autoplay = false) {
     : list.findIndex((track) => track.id === id)
   if (!list[targetIndex]) return
 
+  resumeAudioContext().catch((error) => {
+    console.error('[audio context]', error)
+  })
+
   progress.value = 0
   prepareLyricsForTrackChange()
   currentIndex.value = targetIndex
@@ -218,7 +228,13 @@ export function startMusic() {
   }
   if (!playing.value && !playPending) {
     playPending = true
-    currentMusic.value.play()
+    const music = currentMusic.value
+    resumeAudioContext()
+      .then(() => music.play())
+      .catch((error) => {
+        playPending = false
+        console.error('[audio context]', error)
+      })
   }
   resetLyricAnimation(700)
 }
