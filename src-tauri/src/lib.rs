@@ -236,6 +236,39 @@ fn media_set_playback(
 fn media_set_volume(media: State<'_, media::MediaState>, volume: f64) -> Result<(), String> { media.set_volume(volume) }
 
 #[tauri::command]
+fn list_system_fonts() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::collections::BTreeSet;
+        use std::process::Command;
+
+        let output = Command::new("fc-list")
+            .arg("--format=%{family}\n")
+            .output()
+            .map_err(|error| format!("failed to execute fc-list: {error}"))?;
+        if !output.status.success() {
+            return Err("fc-list returned a non-zero status".to_string());
+        }
+
+        let mut families = BTreeSet::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            for family in line.split(',') {
+                let family = family.trim();
+                if !family.is_empty() {
+                    families.insert(family.to_string());
+                }
+            }
+        }
+        return Ok(families.into_iter().collect());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
 fn get_settings(settings: State<'_, SettingsState>) -> Result<Value, String> {
     settings.0.read().map(|value| value.clone()).map_err(|error| error.to_string())
 }
@@ -355,6 +388,7 @@ pub fn run() {
             select_local_folder, scan_local_music, read_cover, read_lyrics,
             audio_load, audio_play, audio_pause, audio_seek, audio_set_volume, audio_status, audio_stop,
             media_set_metadata, media_set_playback, media_set_volume,
+            list_system_fonts,
             get_settings, set_settings, get_last_playlist, save_last_playlist, report_frontend_error, quit_app,
         ])
         .run(tauri::generate_context!())

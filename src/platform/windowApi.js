@@ -58,6 +58,7 @@ export function installWindowApi() {
     systemMediaControl: (callback) => subscribe('systemMediaControl', callback),
     setSettings: (settings) => invoke('set_settings', { settings }),
     getSettings: () => invoke('get_settings'),
+    listSystemFonts: () => invoke('list_system_fonts'),
     openFile: () => invoke('select_local_folder'),
     selectFile: () => open({ directory: false, multiple: false }),
     openLocalFolder: (path) => revealItemInDir(path),
