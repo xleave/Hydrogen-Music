@@ -32,6 +32,9 @@ export function installWindowApi() {
   const trayListener = listen('tray-hide', () => {
     emit('beforeTrayHide')
   })
+  const mediaListener = listen('media-control', (event) => {
+    emit('systemMediaControl', event.payload)
+  })
 
   window.windowApi = {
     windowMin: () => appWindow.minimize(),
@@ -60,6 +63,9 @@ export function installWindowApi() {
     audioSetVolume: (volume) => invoke('audio_set_volume', { volume }),
     audioStatus: () => invoke('audio_status'),
     audioStop: () => invoke('audio_stop'),
+    setSystemMediaMetadata: (metadata) => invoke('media_set_metadata', metadata),
+    setSystemMediaVolume: (volume) => invoke('media_set_volume', { volume }),
+    systemMediaControl: (callback) => subscribe('systemMediaControl', callback),
     setSettings: (settings) => invoke('set_settings', { settings }),
     getSettings: () => invoke('get_settings'),
     openFile: () => open({ directory: true, multiple: false }),
@@ -77,7 +83,7 @@ export function installWindowApi() {
     musicProcessControl: (callback) => subscribe('musicProcessControl', callback),
     hidePlayer: (callback) => subscribe('hidePlayer', callback),
     lyricControl: (callback) => subscribe('lyricControl', callback),
-    playOrPauseMusicCheck: noop,
+    playOrPauseMusicCheck: (playing) => invoke('media_set_playback', { playing }),
     changeTrayMusicPlaymode: noop,
     registerShortcuts: noop,
     unregisterShortcuts: noop,
@@ -85,7 +91,8 @@ export function installWindowApi() {
 
   return async () => {
     callbacks.clear()
-    const unlisten = await trayListener
-    unlisten()
+    const [unlistenTray, unlistenMedia] = await Promise.all([trayListener, mediaListener])
+    unlistenTray()
+    unlistenMedia()
   }
 }

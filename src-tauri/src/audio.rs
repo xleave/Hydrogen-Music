@@ -107,6 +107,10 @@ impl AudioState {
         self.with_output(|output| Ok(output.status()))
     }
 
+    pub fn position(&self) -> f64 {
+        self.status().map_or(0.0, |status| status.position)
+    }
+
     pub fn stop(&self) -> Result<(), String> {
         let mut output = self.0.lock().map_err(|error| error.to_string())?;
         if let Some(output) = output.as_mut() {

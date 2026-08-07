@@ -1,5 +1,6 @@
 import { playerRefs, otherStore } from './state'
 import {
+  changeProgress,
   changeProgressByDragEnd,
   changeProgressByDragStart,
   pauseMusic,
@@ -18,6 +19,40 @@ let cleanup = null
 
 function isInside(target, selector) {
   return target instanceof Node && (document.querySelector(selector)?.contains(target) ?? false)
+}
+
+function handleSystemMediaControl(command) {
+  switch (command.action) {
+    case 'play':
+      startMusic()
+      break
+    case 'pause':
+      pauseMusic()
+      break
+    case 'toggle':
+      if (playing.value) pauseMusic()
+      else startMusic()
+      break
+    case 'next':
+      playNext()
+      break
+    case 'previous':
+      playLast()
+      break
+    case 'seek':
+      changeProgress(command.value)
+      break
+    case 'seekBy':
+      changeProgress(Math.max(0, Math.min(
+        currentMusic.value?.duration() || 0,
+        progress.value + command.value,
+      )))
+      break
+    case 'volume':
+      volume.value = Math.max(0, Math.min(1, command.value))
+      currentMusic.value?.volume(volume.value)
+      break
+  }
 }
 
 export function initializePlayerLifecycle() {
@@ -66,6 +101,7 @@ export function initializePlayerLifecycle() {
     windowApi.playOrPauseMusic(() => (playing.value ? pauseMusic() : startMusic())),
     windowApi.lastOrNextMusic((event, option) => (option === 'last' ? playLast() : playNext())),
     windowApi.changeMusicPlaymode((event, mode) => applyPlayMode(mode)),
+    windowApi.systemMediaControl((event, command) => handleSystemMediaControl(command)),
     windowApi.volumeUp(() => {
       volume.value = Math.min(1, volume.value + 0.1)
       currentMusic.value?.volume(volume.value)
@@ -91,6 +127,7 @@ export function initializePlayerLifecycle() {
     navigator.mediaSession.setActionHandler('pause', pauseMusic)
   }
   windowApi.playOrPauseMusicCheck(playing.value)
+  windowApi.setSystemMediaVolume(volume.value)
   windowApi.changeTrayMusicPlaymode(playMode.value)
 
   cleanup = () => {

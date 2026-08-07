@@ -331,7 +331,7 @@ const setCustomFont = () => {
                 <div class="app-icon">
                     <img src="../assets/icon/icon.ico" alt="">
                 </div>
-                <div class="version">V0.7.0</div>
+                <div class="version">V0.8.0</div>
                 <div class="app-author" @click="toGithub()">Made by xleave</div>
             </div>
         </div>

@@ -29,6 +29,7 @@ export function localMusicHandle(list, firstOnly = false) {
     url: song.dirPath,
     name: song.common.title,
     localName: song.common.localTitle,
+    album: song.common.album || '',
     type: 'local',
     sampleRate: (song.format.sampleRate || 0) / 1000,
     bitsPerSample: song.format.bitsPerSample || 0,

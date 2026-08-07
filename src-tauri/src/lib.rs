@@ -1,5 +1,6 @@
 mod audio;
 mod library;
+mod media;
 mod storage;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -152,6 +153,31 @@ fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn media_set_metadata(
+    media: State<'_, media::MediaState>,
+    title: String,
+    artist: String,
+    album: String,
+    duration: f64,
+) -> Result<(), String> {
+    media.set_metadata(&title, &artist, &album, duration)
+}
+
+#[tauri::command]
+fn media_set_playback(
+    audio: State<'_, audio::AudioState>,
+    media: State<'_, media::MediaState>,
+    playing: bool,
+) -> Result<(), String> {
+    media.set_playback(playing, audio.position())
+}
+
+#[tauri::command]
+fn media_set_volume(media: State<'_, media::MediaState>, volume: f64) -> Result<(), String> {
+    media.set_volume(volume)
+}
+
+#[tauri::command]
 fn get_settings(settings: State<'_, SettingsState>) -> Result<Value, String> {
     settings
         .0
@@ -239,6 +265,8 @@ pub fn run() {
             )
             .map_err(std::io::Error::other)?;
             app.manage(SettingsState(RwLock::new(settings)));
+            let media = media::MediaState::new(app.handle()).map_err(std::io::Error::other)?;
+            app.manage(media);
 
             let log_directory = app.path().app_log_dir()?;
             std::fs::create_dir_all(&log_directory)?;
@@ -309,6 +337,9 @@ pub fn run() {
             audio_set_volume,
             audio_status,
             audio_stop,
+            media_set_metadata,
+            media_set_playback,
+            media_set_volume,
             get_settings,
             set_settings,
             get_last_playlist,

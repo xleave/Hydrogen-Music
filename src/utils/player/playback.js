@@ -66,7 +66,10 @@ class NativeMusic {
     this.position = position
     this.endHandled = false
     windowApi.audioSeek(position)
-      .then((status) => this.applyStatus(status))
+      .then((status) => {
+        this.applyStatus(status)
+        windowApi.playOrPauseMusicCheck(status.playing)
+      })
       .catch((error) => reportAudioError('audio.seek', error))
     return position
   }
@@ -78,6 +81,7 @@ class NativeMusic {
   volume(value) {
     if (value === undefined) return volume.value
     windowApi.audioSetVolume(value).catch((error) => reportAudioError('audio.volume', error))
+    windowApi.setSystemMediaVolume(value).catch((error) => reportAudioError('media.volume', error))
     return value
   }
 
@@ -183,6 +187,7 @@ export async function play(filePath, autoplay, requestId = audioRequestId) {
   music.loop(playMode.value === 2)
   currentMusic.value = music
   time.value = Math.floor(status.duration)
+  updateMediaSession()
   playing.value = status.playing
   playPending = false
   windowApi.playOrPauseMusicCheck(status.playing)
@@ -192,13 +197,20 @@ export async function play(filePath, autoplay, requestId = audioRequestId) {
 
 export function updateMediaSession() {
   const track = currentTrack()
-  if (!track || !('mediaSession' in navigator) || !('MediaMetadata' in window)) return
+  if (!track) return
 
   coverUrl.value = localBase64Img.value || null
   const metadata = {
     title: track.name || track.localName || '',
     artist: (track.ar || []).map((artist) => artist.name).join(', '),
+    album: track.album || '',
   }
+  windowApi.setSystemMediaMetadata({
+    ...metadata,
+    duration: time.value,
+  }).catch((error) => reportAudioError('media.metadata', error))
+
+  if (!('mediaSession' in navigator) || !('MediaMetadata' in window)) return
   if (coverUrl.value) metadata.artwork = [{ src: coverUrl.value }]
   navigator.mediaSession.metadata = new MediaMetadata(metadata)
 }
