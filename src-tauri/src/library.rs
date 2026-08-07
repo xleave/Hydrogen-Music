@@ -3,6 +3,7 @@ use lofty::{
     read_from_path,
     tag::{Accessor, ItemKey},
 };
+use rayon::prelude::*;
 use serde::Serialize;
 use std::{fs, path::Path};
 
@@ -62,13 +63,17 @@ struct FormatMetadata {
 }
 
 pub fn scan(folders: &[String]) -> Result<ScanResult, String> {
-    let mut metadata_roots = Vec::with_capacity(folders.len());
-    let mut count = 0;
-    for folder in folders {
-        let root = scan_directory(Path::new(folder), &mut count)?;
-        metadata_roots.push(root);
-    }
+    // 顶层文件夹并行扫描
+    let results: Result<Vec<(Node, usize)>, String> = folders
+        .par_iter()
+        .map(|folder| scan_directory(Path::new(folder)))
+        .collect();
+
+    let results = results?;
+    let count = results.iter().map(|(_, c)| c).sum();
+    let metadata_roots: Vec<Node> = results.into_iter().map(|(n, _)| n).collect();
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
+
     Ok(ScanResult {
         dir_tree,
         loca_files_metadata: metadata_roots,
@@ -76,87 +81,124 @@ pub fn scan(folders: &[String]) -> Result<ScanResult, String> {
     })
 }
 
-fn scan_directory(path: &Path, count: &mut usize) -> Result<Node, String> {
+/// 扫描单个目录，返回 (Node, 文件数量)
+/// 子目录递归扫描，目录内音频文件并行解析 tag
+fn scan_directory(path: &Path) -> Result<(Node, usize), String> {
     let mut entries = fs::read_dir(path)
-        .map_err(|error| format!("无法读取 {}: {error}", path.display()))?
+        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    entries.sort_by_key(|entry| entry.file_name());
+        .map_err(|e| e.to_string())?;
 
-    let mut children = Vec::new();
+    // 按文件名排序，保证结果一致
+    entries.sort_unstable_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+    // 分离子目录和音频文件
+    let mut sub_dirs = Vec::new();
+    let mut audio_paths = Vec::new();
     for entry in entries {
-        let entry_path = entry.path();
-        if entry_path.is_dir() {
-            children.push(scan_directory(&entry_path, count)?);
-        } else if is_audio_file(&entry_path) {
-            children.push(read_track(&entry_path).unwrap_or_else(|_| fallback_track(&entry_path)));
-            *count += 1;
+        let p = entry.path();
+        if p.is_dir() {
+            sub_dirs.push(p);
+        } else if is_audio_file(&p) {
+            audio_paths.push(p);
         }
     }
 
-    Ok(Node {
-        name: path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
-            .into_owned(),
-        dir_path: path.to_string_lossy().into_owned(),
-        node_type: "folder".into(),
-        children: Some(children),
-        id: None,
-        common: None,
-        format: None,
-    })
+    // 子目录：递归扫描（串行，保持树结构）
+    let mut children: Vec<Node> = Vec::with_capacity(sub_dirs.len() + audio_paths.len());
+    let mut count = 0usize;
+    for sub in sub_dirs {
+        let (node, c) = scan_directory(&sub)?;
+        count += c;
+        children.push(node);
+    }
+
+    // 音频文件：rayon 并行解析 lofty tag（最大瓶颈所在）
+    let file_count = audio_paths.len();
+    let file_nodes: Vec<Node> = audio_paths
+        .par_iter()
+        .map(|p| read_track(p).unwrap_or_else(|_| fallback_track(p)))
+        .collect();
+
+    count += file_count;
+    children.extend(file_nodes);
+
+    let name = path
+        .file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned();
+
+    Ok((
+        Node {
+            name,
+            dir_path: path.to_string_lossy().into_owned(),
+            node_type: "folder".into(),
+            children: Some(children),
+            id: None,
+            common: None,
+            format: None,
+        },
+        count,
+    ))
 }
 
 fn is_audio_file(path: &Path) -> bool {
     path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| AUDIO_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
+        .and_then(|ext| ext.to_str())
+        .map(|ext| AUDIO_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
 }
 
 fn read_track(path: &Path) -> Result<Node, String> {
     let tagged = read_from_path(path)
-        .map_err(|error| format!("无法解析 {}: {error}", path.display()))?;
+        .map_err(|e| format!("无法解析 {}: {e}", path.display()))?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+
     let local_title = path
         .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
+
     let title = tag
         .and_then(Accessor::title)
-        .map(|value| value.into_owned())
+        .map(|v| v.into_owned())
         .unwrap_or_else(|| local_title.clone());
+
     let artists = tag
         .and_then(Accessor::artist)
-        .map(|value| split_artists(&value))
+        .map(|v| split_artists(&v))
         .unwrap_or_else(|| vec!["其他".into()]);
+
     let album = tag
         .and_then(Accessor::album)
-        .map(|value| value.into_owned())
+        .map(|v| v.into_owned())
         .unwrap_or_else(|| "其他".into());
+
     let properties = tagged.properties();
     let extension = path
         .extension()
         .unwrap_or_default()
         .to_string_lossy()
         .to_ascii_uppercase();
+
     let file_path = path.to_string_lossy().into_owned();
+
     let has_lyrics = tagged
         .tags()
         .iter()
-        .any(|value| {
-            value.get_string(ItemKey::Lyrics).is_some()
-                || value.get_string(ItemKey::UnsyncLyrics).is_some()
+        .any(|t| {
+            t.get_string(ItemKey::Lyrics).is_some()
+                || t.get_string(ItemKey::UnsyncLyrics).is_some()
         })
         || path.with_extension("lrc").is_file();
-    let date = tag.and_then(Accessor::date).map(|value| value.to_string());
+
+    let date = tag.and_then(Accessor::date).map(|v| v.to_string());
     let year = date
         .as_deref()
-        .and_then(|value| value.get(..4))
-        .and_then(|value| value.parse().ok());
+        .and_then(|v| v.get(..4))
+        .and_then(|v| v.parse().ok());
 
     Ok(Node {
         name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
@@ -171,18 +213,18 @@ fn read_track(path: &Path) -> Result<Node, String> {
             artists,
             album,
             albumartist: tag
-                .and_then(|value| value.get_string(ItemKey::AlbumArtist))
+                .and_then(|t| t.get_string(ItemKey::AlbumArtist))
                 .map(str::to_owned),
             date,
             genre: tag
                 .and_then(Accessor::genre)
-                .map(|value| vec![value.into_owned()])
+                .map(|v| vec![v.into_owned()])
                 .unwrap_or_default(),
             year,
             has_lyrics,
         }),
         format: Some(FormatMetadata {
-            bitrate: properties.audio_bitrate().map(|value| value * 1000),
+            bitrate: properties.audio_bitrate().map(|v| v * 1000),
             bits_per_sample: properties.bit_depth(),
             container: extension,
             duration: properties.duration().as_secs_f64(),
@@ -235,7 +277,7 @@ fn split_artists(value: &str) -> Vec<String> {
     value
         .split([',', ';', '/'])
         .map(str::trim)
-        .filter(|artist| !artist.is_empty())
+        .filter(|a| !a.is_empty())
         .map(str::to_owned)
         .collect()
 }
