@@ -1,18 +1,6 @@
 import { playerRefs, otherStore } from './state'
-import {
-  changeProgress,
-  changeProgressByDragEnd,
-  changeProgressByDragStart,
-  pauseMusic,
-  startMusic,
-  stopProgress,
-} from './playback'
-import {
-  applyPlayMode,
-  playLast,
-  playNext,
-  savePlaylist,
-} from './playlist'
+import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, startMusic, stopProgress } from './playback'
+import { applyPlayMode, playLast, playNext, savePlaylist } from './playlist'
 
 const { currentMusic, playMode, playing, playlistWidgetShow, progress, volume } = playerRefs
 let cleanup = null
@@ -23,31 +11,13 @@ function isInside(target, selector) {
 
 function handleSystemMediaControl(command) {
   switch (command.action) {
-    case 'play':
-      startMusic()
-      break
-    case 'pause':
-      pauseMusic()
-      break
-    case 'toggle':
-      if (playing.value) pauseMusic()
-      else startMusic()
-      break
-    case 'next':
-      playNext()
-      break
-    case 'previous':
-      playLast()
-      break
-    case 'seek':
-      changeProgress(command.value)
-      break
-    case 'seekBy':
-      changeProgress(Math.max(0, Math.min(
-        currentMusic.value?.duration() || 0,
-        progress.value + command.value,
-      )))
-      break
+    case 'play': startMusic(); break
+    case 'pause': pauseMusic(); break
+    case 'toggle': playing.value ? pauseMusic() : startMusic(); break
+    case 'next': playNext(); break
+    case 'previous': playLast(); break
+    case 'seek': changeProgress(command.value); break
+    case 'seekBy': changeProgress(Math.max(0, Math.min(currentMusic.value?.duration() || 0, progress.value + command.value))); break
     case 'volume':
       volume.value = Math.max(0, Math.min(1, command.value))
       currentMusic.value?.volume(volume.value)
@@ -73,22 +43,10 @@ export function initializePlayerLifecycle() {
   }
   const onClick = (event) => {
     if (playlistWidgetShow.value) {
-      const selectors = [
-        '.playlist-widget',
-        '.music-control',
-        '.music-other',
-        '.playlist-widget-player',
-        '.song-control',
-        '.context-menu',
-        '.item-delete',
-      ]
-      if (!selectors.some((selector) => isInside(event.target, selector))) {
-        playlistWidgetShow.value = false
-      }
+      const selectors = ['.playlist-widget', '.music-control', '.music-other', '.playlist-widget-player', '.song-control', '.context-menu', '.item-delete']
+      if (!selectors.some((selector) => isInside(event.target, selector))) playlistWidgetShow.value = false
     }
-    if (otherStore.contextMenuShow && !isInside(event.target, '.context-menu')) {
-      otherStore.contextMenuShow = false
-    }
+    if (otherStore.contextMenuShow && !isInside(event.target, '.context-menu')) otherStore.contextMenuShow = false
   }
 
   window.addEventListener('mousedown', onMouseDown)
@@ -102,14 +60,8 @@ export function initializePlayerLifecycle() {
     windowApi.lastOrNextMusic((event, option) => (option === 'last' ? playLast() : playNext())),
     windowApi.changeMusicPlaymode((event, mode) => applyPlayMode(mode)),
     windowApi.systemMediaControl((event, command) => handleSystemMediaControl(command)),
-    windowApi.volumeUp(() => {
-      volume.value = Math.min(1, volume.value + 0.1)
-      currentMusic.value?.volume(volume.value)
-    }),
-    windowApi.volumeDown(() => {
-      volume.value = Math.max(0, volume.value - 0.1)
-      currentMusic.value?.volume(volume.value)
-    }),
+    windowApi.volumeUp(() => { volume.value = Math.min(1, volume.value + 0.1); currentMusic.value?.volume(volume.value) }),
+    windowApi.volumeDown(() => { volume.value = Math.max(0, volume.value - 0.1); currentMusic.value?.volume(volume.value) }),
     windowApi.musicProcessControl((event, mode) => {
       if (!currentMusic.value) return
       const delta = mode === 'forward' ? 3 : -3
@@ -118,6 +70,11 @@ export function initializePlayerLifecycle() {
       currentMusic.value.seek(target)
     }),
     windowApi.beforeTrayHide(savePlaylist),
+    windowApi.beforeQuit(() => {
+      savePlaylist()
+        .catch((error) => console.error('[playlist save before exit]', error))
+        .finally(() => windowApi.exitApp())
+    }),
   )
 
   if ('mediaSession' in navigator) {
@@ -134,9 +91,7 @@ export function initializePlayerLifecycle() {
     for (const dispose of disposers) dispose?.()
     stopProgress()
     if ('mediaSession' in navigator) {
-      for (const action of ['previoustrack', 'nexttrack', 'play', 'pause']) {
-        navigator.mediaSession.setActionHandler(action, null)
-      }
+      for (const action of ['previoustrack', 'nexttrack', 'play', 'pause']) navigator.mediaSession.setActionHandler(action, null)
     }
     cleanup = null
   }

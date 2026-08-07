@@ -17,9 +17,7 @@ function emit(name, ...args) {
 }
 
 async function scanLocalMusic(params) {
-  const settings = await invoke('get_settings')
-  const folders = settings.local.localFolder
-  const result = await invoke('scan_local_music', { folders })
+  const result = await invoke('scan_local_music')
   emit('localMusicCount', result.count)
   emit('localMusicFiles', { ...result, type: params.type })
 }
@@ -28,27 +26,19 @@ const noop = () => {}
 
 export function installWindowApi() {
   const appWindow = getCurrentWindow()
-
-  const trayListener = listen('tray-hide', () => {
-    emit('beforeTrayHide')
-  })
-  const mediaListener = listen('media-control', (event) => {
-    emit('systemMediaControl', event.payload)
-  })
+  const trayListener = listen('tray-hide', () => emit('beforeTrayHide'))
+  const mediaListener = listen('media-control', (event) => emit('systemMediaControl', event.payload))
+  const exitListener = listen('app-exit-requested', () => emit('beforeQuit'))
 
   window.windowApi = {
     windowMin: () => appWindow.minimize(),
     windowMax: async () => (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize(),
-    // 直接关闭窗口：Rust on_window_event 会根据 quitApp 设置决定隐藏到托盘还是退出
     windowClose: () => appWindow.close(),
     toRegister: (url) => openUrl(url),
-    // beforeQuit 事件由 tray-hide 触发，用于在驻留托盘前保存播放列表
     beforeQuit: (callback) => subscribe('beforeQuit', callback),
-    // beforeTrayHide：仅保存播放列表，不退出（托盘隐藏时触发）
     beforeTrayHide: (callback) => subscribe('beforeTrayHide', callback),
-    // exitApp：保存播放列表后调用 quit_app 命令强制退出（绕过 quitApp 设置）
     exitApp: async (playlist) => {
-      await invoke('save_last_playlist', { playlist })
+      if (playlist !== undefined) await invoke('save_last_playlist', { playlist })
       await invoke('quit_app')
     },
     scanLocalMusic,
@@ -56,7 +46,7 @@ export function installWindowApi() {
     localMusicCount: (callback) => subscribe('localMusicCount', callback),
     getLocalMusicImage: (filePath) => invoke('read_cover', { filePath }),
     getLocalMusicLyric: (filePath) => invoke('read_lyrics', { filePath }),
-    audioLoad: (filePath, autoplay, volume) => invoke('audio_load', { filePath, autoplay, volume }),
+    audioLoad: (filePath, autoplay, volume, requestId) => invoke('audio_load', { filePath, autoplay, volume, requestId }),
     audioPlay: () => invoke('audio_play'),
     audioPause: () => invoke('audio_pause'),
     audioSeek: (position) => invoke('audio_seek', { position }),
@@ -68,7 +58,7 @@ export function installWindowApi() {
     systemMediaControl: (callback) => subscribe('systemMediaControl', callback),
     setSettings: (settings) => invoke('set_settings', { settings }),
     getSettings: () => invoke('get_settings'),
-    openFile: () => open({ directory: true, multiple: false }),
+    openFile: () => invoke('select_local_folder'),
     selectFile: () => open({ directory: false, multiple: false }),
     openLocalFolder: (path) => revealItemInDir(path),
     saveLastPlaylist: (playlist) => invoke('save_last_playlist', { playlist }),
@@ -91,8 +81,7 @@ export function installWindowApi() {
 
   return async () => {
     callbacks.clear()
-    const [unlistenTray, unlistenMedia] = await Promise.all([trayListener, mediaListener])
-    unlistenTray()
-    unlistenMedia()
+    const unlisteners = await Promise.all([trayListener, mediaListener, exitListener])
+    unlisteners.forEach((unlisten) => unlisten())
   }
 }
