@@ -2,11 +2,13 @@
   import { RecycleScroller } from 'vue-virtual-scroller'
   import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
   import { pauseMusic } from '../utils/player';
-  import { addSong, setShuffledList } from '../utils/player'
+  import { addSong, savePlaylist, setShuffledList } from '../utils/player'
   import { usePlayerStore } from '../store/playerStore'
+  import { computed } from 'vue'
   import { storeToRefs } from 'pinia'
   const playerStore = usePlayerStore()
   const { playing, progress, playMode, currentMusic, currentIndex, listInfo, songList, shuffledList, shuffleIndex, songId, widgetState, playlistWidgetShow, lyricShow } = storeToRefs(playerStore)
+  const playlistSongs = computed(() => songList.value || [])
 
   const clearPlaylist = () => {
     playlistWidgetShow.value = false
@@ -18,7 +20,7 @@
       shuffledList.value = null
       currentIndex.value = 0
       shuffleIndex.value = 0
-      currentMusic.value.unload()
+      currentMusic.value?.unload()
       currentMusic.value = null
       progress.value = 0
       if(!widgetState.value) {
@@ -26,6 +28,7 @@
         lyricShow.value = false
       }
       windowApi.setWindowTile('Hydrogen Music')
+      savePlaylist()
       clearTimeout(clearMusic)
     }, 300);
   }
@@ -39,29 +42,31 @@
     if(index < currentIndex.value) {
       songList.value.splice(index, 1)
       currentIndex.value--
-      if(playMode.value == 3) setShuffledList()
+      if(playMode.value === 3) setShuffledList()
+      savePlaylist()
       return
     }
     //·删除的是当前播放歌曲之后的
     if(index > currentIndex.value) {
       songList.value.splice(index, 1)
-      if(playMode.value == 3) setShuffledList()
+      if(playMode.value === 3) setShuffledList()
+      savePlaylist()
       return
     }
     //·删除的是当前播放歌曲
-    if(index == currentIndex.value) {
+    if(index === currentIndex.value) {
       let id = null
       let curIndex = null
       //·如果是最后一首
-      if(index == songList.value.length - 1) {
+      if(index === songList.value.length - 1) {
         //且只有一首歌
-        if(songList.value.length == 1) {clearPlaylist();return}
+        if(songList.value.length === 1) {clearPlaylist();return}
         //且不只有一首歌
         curIndex = index - 1
         id = songList.value[curIndex].id
         addSong(id, curIndex, playing.value)
         songList.value.splice(index, 1)
-        if(playMode.value == 3) setShuffledList()
+        if(playMode.value === 3) setShuffledList()
       } else {
       //·如果不是最后一首
         curIndex = currentIndex.value + 1
@@ -69,13 +74,15 @@
         addSong(id, curIndex, playing.value)
         songList.value.splice(index, 1)
         currentIndex.value--
-        if(playMode.value == 3) setShuffledList()
+        if(playMode.value === 3) setShuffledList()
       }
+      savePlaylist()
     }
   }
   const getPositon = () => {
-    document.getElementsByClassName('playlist-widget-item')[0].scrollTo({top: currentIndex.value * 37,behavior: 'smooth'})
-    document.getElementsByClassName('playlist-widget-item')[1].scrollTo({top: currentIndex.value * 37,behavior: 'smooth'})
+    document.querySelectorAll('.playlist-widget-item').forEach((element) => {
+      element.scrollTo({top: currentIndex.value * 37, behavior: 'smooth'})
+    })
   }
 </script>
 
@@ -84,7 +91,7 @@
       <div class="playlist-widget-header">
         <div class="playlist-widget-info">
           <span class="info-title">当前播放</span>
-          <span class="info-num">({{songList.length}})</span>
+          <span class="info-num">({{playlistSongs.length}})</span>
         </div>
         <div>
           <svg t="1676113510483" @click="getPositon()" class="playlist-widget-position" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2631" width="200" height="200"><path d="M927.282215 479.83544l-83.4629 0c-15.068184-158.75777-141.389194-285.078781-300.146964-300.146964L543.67235 95.835695c0-17.622356-14.285355-31.907711-31.907711-31.907711-17.622356 0-31.907711 14.285355-31.907711 31.907711l0 83.85278c-158.75777 15.068184-285.078781 141.389194-300.146964 300.146964l-83.826174 0c-17.622356 0-31.907711 14.285355-31.907711 31.907711 0 17.622356 14.285355 31.907711 31.907711 31.907711l83.826174 0c15.068184 158.75777 141.389194 285.078781 300.146964 300.146964l0 83.946924c0 17.622356 14.285355 31.907711 31.907711 31.907711 17.622356 0 31.907711-14.285355 31.907711-31.907711l0-83.946924c158.75777-15.068184 285.078781-141.389194 300.146964-300.146964l83.4629 0c17.622356 0 31.907711-14.285355 31.907711-31.907711C959.189925 494.120794 944.904571 479.83544 927.282215 479.83544zM511.76464 793.112446c-155.396209 0-281.369296-125.973086-281.369296-281.369296s125.973086-281.369296 281.369296-281.369296 281.369296 125.973086 281.369296 281.369296S667.159826 793.112446 511.76464 793.112446z" fill="#000000" p-id="2632"></path><path d="M511.76464 511.74315m-69.616544 0a68.031 68.031 0 1 0 139.233088 0 68.031 68.031 0 1 0-139.233088 0Z" fill="#000000" p-id="2633"></path></svg>
@@ -94,17 +101,17 @@
       <div class="line"></div>
       <RecycleScroller
         class="playlist-widget-item"
-        :items="songList.slice(0, songList.length + 1)"
+        :items="playlistSongs"
         :item-size="36"
         key-field="id"
         v-slot="{ item, index }"
       >
-        <div class="list-item" :class="{'list-item-playing': songId == item.id, 'list-item-disabled': item.playable !== undefined && !item.playable }" @dblclick="play(item.id, index)">
+        <div class="list-item" :class="{'list-item-playing': songId === item.id, 'list-item-disabled': item.playable !== undefined && !item.playable }" @dblclick="play(item.id, index)">
           <div class="item-info">
-            <svg v-show="(songId == item.id)" t="1669115475194" class="playing-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="10562" width="200" height="200"><path d="M158.249961 614.402466c37.219322 0 67.372153 30.559802 67.372153 68.272422v273.065023c0 37.700288-30.152831 68.260089-67.372153 68.260089S90.865475 993.440198 90.865475 955.739911V682.674888a68.753387 68.753387 0 0 1 19.731914-48.269194 66.977515 66.977515 0 0 1 47.652572-20.003228zM394.083329 0.04933c37.20699 0 67.372153 30.572134 67.372153 68.272422v887.418159c0 37.700288-30.165163 68.260089-67.372153 68.260089s-67.322823-30.559802-67.322824-68.260089V68.272422c0-37.700288 30.103501-68.223092 67.322824-68.223092zM629.916696 273.077355c37.20699 0 67.384486 30.559802 67.384486 68.260089v614.402467c0 37.700288-30.177496 68.260089-67.384486 68.260089s-67.384486-30.559802-67.384486-68.260089v-614.402467c0-37.700288 30.165163-68.260089 67.384486-68.260089z m235.833368-136.544844a66.878855 66.878855 0 0 1 47.640239 20.003228 68.704057 68.704057 0 0 1 19.731914 48.269194v750.934978c0 37.700288-30.177496 68.260089-67.384486 68.260089s-67.384486-30.559802-67.384486-68.260089V204.767936a68.753387 68.753387 0 0 1 19.731914-48.269195 66.928185 66.928185 0 0 1 47.652572-20.003227z m0 0" p-id="10563"></path></svg>
+            <svg v-show="(songId === item.id)" t="1669115475194" class="playing-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="10562" width="200" height="200"><path d="M158.249961 614.402466c37.219322 0 67.372153 30.559802 67.372153 68.272422v273.065023c0 37.700288-30.152831 68.260089-67.372153 68.260089S90.865475 993.440198 90.865475 955.739911V682.674888a68.753387 68.753387 0 0 1 19.731914-48.269194 66.977515 66.977515 0 0 1 47.652572-20.003228zM394.083329 0.04933c37.20699 0 67.372153 30.572134 67.372153 68.272422v887.418159c0 37.700288-30.165163 68.260089-67.372153 68.260089s-67.322823-30.559802-67.322824-68.260089V68.272422c0-37.700288 30.103501-68.223092 67.322824-68.223092zM629.916696 273.077355c37.20699 0 67.384486 30.559802 67.384486 68.260089v614.402467c0 37.700288-30.177496 68.260089-67.384486 68.260089s-67.384486-30.559802-67.384486-68.260089v-614.402467c0-37.700288 30.165163-68.260089 67.384486-68.260089z m235.833368-136.544844a66.878855 66.878855 0 0 1 47.640239 20.003228 68.704057 68.704057 0 0 1 19.731914 48.269194v750.934978c0 37.700288-30.177496 68.260089-67.384486 68.260089s-67.384486-30.559802-67.384486-68.260089V204.767936a68.753387 68.753387 0 0 1 19.731914-48.269195 66.928185 66.928185 0 0 1 47.652572-20.003227z m0 0" p-id="10563"></path></svg>
             <span class="item-name">{{item.name  || item.localName}}</span>
             <span class="item-separator"> - </span>
-            <span class="item-author" @dblclick.stop v-for="(singer, index) in item.ar">{{singer.name}}{{index == item.ar.length -1 ? '' : '/'}}</span>
+            <span class="item-author" @dblclick.stop v-for="(singer, index) in item.ar">{{singer.name}}{{index === item.ar.length -1 ? '' : '/'}}</span>
           </div>
           <svg t="1670569532229" @dblclick.stop @click="delCurrentSong(index, item.id)" class="item-delete" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2597" width="200" height="200"><path d="M558.933333 529.066667l285.866667 285.866666-29.866667 29.866667-285.866666-285.866667-285.866667 285.866667-29.866667-29.866667 285.866667-285.866666L213.333333 243.2l29.866667-29.866667 285.866667 285.866667L814.933333 213.333333l29.866667 29.866667-285.866667 285.866667z" fill="#444444" p-id="2598"></path></svg>
         </div>

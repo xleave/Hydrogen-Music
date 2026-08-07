@@ -30,7 +30,7 @@
   </div>
 </template>
 <script setup>
-import { computed, onActivated, onDeactivated, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { absolutePosition } from "../utils/domHandler";
 
 const props = defineProps({
@@ -64,10 +64,10 @@ let clickOutside = (event) => {
     option.value = false;
   }
 };
-onActivated(() => {
+onMounted(() => {
   window.addEventListener("click", clickOutside);
 });
-onDeactivated(() => {
+onBeforeUnmount(() => {
   window.removeEventListener("click", clickOutside);
 });
 

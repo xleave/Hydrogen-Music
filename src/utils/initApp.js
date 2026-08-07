@@ -18,11 +18,11 @@ export function initSettings() {
     lyricInterludeTime.value = settings.music.lyricInterlude
     localStore.localFolderSettings = settings.local.localFolder
     localStore.quitApp = settings.other.quitApp
-    if (localStore.localFolderSettings.length && !localStore.localMusicFolder) {
+    if (localStore.localFolderSettings.length && !localStore.localDirectoryTree) {
       scanMusic({ type: 'local', refresh: false })
     }
     if (!localStore.localFolderSettings.length) {
-      localStore.localMusicFolder = null
+      localStore.localDirectoryTree = null
       localStore.localMusicList = null
       localStore.localMusicClassify = null
     }

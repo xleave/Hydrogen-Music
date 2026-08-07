@@ -46,7 +46,9 @@ Rust 后端负责解析 MP3/ID3、FLAC/Vorbis Comments、MP4/iTunes、OGG、Opus
 - `src-tauri/`：Rust 目录扫描、标签解析、歌词读取和本地持久化
 - `.github/workflows/`：前端检查、Rust 检查和 Fedora RPM 构建
 
-当前版本的主要调整：
+## 架构与优化
+
+当前版本围绕纯本地播放完成了以下调整：
 
 - 删除账号登录、Cookie 鉴权和登录路由
 - 删除网易云 API、云盘、推荐、搜索、收藏和下载模块
@@ -56,6 +58,12 @@ Rust 后端负责解析 MP3/ID3、FLAC/Vorbis Comments、MP4/iTunes、OGG、Opus
 - 扫描、标签、封面和歌词处理全部在本机完成
 - 统一前端、Tauri 和 Rust 版本号为 `0.7.0`
 - GitHub Actions 使用 Node.js 24，并在 Fedora 42 环境生成 RPM
+
+播放器核心按职责拆分为播放控制、播放队列、歌词、时间格式化和生命周期管理模块。全局事件与播放进度调度具备明确的注册、取消和热更新清理流程，避免重复监听和残留定时任务。
+
+面向大型本地音乐库，歌曲列表使用虚拟滚动；播放队列仅持久化歌曲标识和播放索引，并在扫描完成后从本地元数据重建，减少 JSON 序列化、IPC 传输和磁盘写入。歌词渲染使用 Vue 样式绑定和二分定位当前行，不再逐行直接修改 DOM。
+
+Rust 后端在内存中缓存设置并在修改时同步落盘，窗口关闭判断不再重复读取配置文件。前端未捕获异常会写入应用日志目录的 `frontend-errors.log`，Rust panic 会写入同目录的 `crash.log`，便于定位静默失败。
 
 ## 开发
 

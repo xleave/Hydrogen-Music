@@ -35,7 +35,7 @@
       <MusicPlayer></MusicPlayer>
     </div>
   </Transition>
-  <div class="contextMune">
+  <div class="context-menu">
     <ContextMenu></ContextMenu>
   </div>
   <div class="globalDialog">

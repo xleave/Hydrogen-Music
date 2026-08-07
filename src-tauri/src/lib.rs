@@ -8,12 +8,19 @@ use lofty::{
     tag::ItemKey,
 };
 use serde_json::Value;
-use std::path::Path;
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::Path,
+    sync::RwLock,
+};
 use tauri::{
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, State,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+
+struct SettingsState(RwLock<Value>);
 
 #[tauri::command]
 fn scan_local_music(folders: Vec<String>) -> Result<library::ScanResult, String> {
@@ -80,14 +87,36 @@ fn read_lyrics(file_path: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn get_settings(app: AppHandle) -> Result<Value, String> {
-    storage::read_json(&app, "settings.json", storage::default_settings())
+fn get_settings(settings: State<'_, SettingsState>) -> Result<Value, String> {
+    settings
+        .0
+        .read()
+        .map(|value| value.clone())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn set_settings(app: AppHandle, settings: String) -> Result<(), String> {
-    let value = serde_json::from_str(&settings).map_err(|error| error.to_string())?;
-    storage::write_json(&app, "settings.json", &value)
+fn set_settings(
+    app: AppHandle,
+    state: State<'_, SettingsState>,
+    settings: String,
+) -> Result<(), String> {
+    let value: Value = serde_json::from_str(&settings).map_err(|error| error.to_string())?;
+    storage::write_json(&app, "settings.json", &value)?;
+    *state.0.write().map_err(|error| error.to_string())? = value;
+    Ok(())
+}
+
+#[tauri::command]
+fn report_frontend_error(app: AppHandle, source: String, detail: String) -> Result<(), String> {
+    let directory = app.path().app_log_dir().map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("frontend-errors.log"))
+        .map_err(|error| error.to_string())?;
+    writeln!(file, "[{source}] {detail}").map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -102,10 +131,18 @@ fn save_last_playlist(app: AppHandle, playlist: String) -> Result<(), String> {
 }
 
 /// 判断当前设置是否为"最小化到托盘"模式
-fn is_minimize_to_tray(app: &AppHandle) -> bool {
-    storage::read_json(app, "settings.json", storage::default_settings())
+fn is_minimize_to_tray(settings: &SettingsState) -> bool {
+    settings
+        .0
+        .read()
         .ok()
-        .and_then(|v| v.get("other").and_then(|o| o.get("quitApp")).and_then(|q| q.as_str()).map(|s| s == "minimize"))
+        .and_then(|value| {
+            value
+                .get("other")
+                .and_then(|other| other.get("quitApp"))
+                .and_then(Value::as_str)
+                .map(|mode| mode == "minimize")
+        })
         .unwrap_or(true) // 默认最小化到托盘
 }
 
@@ -129,6 +166,28 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let settings = storage::read_json(
+                app.handle(),
+                "settings.json",
+                storage::default_settings(),
+            )
+            .map_err(std::io::Error::other)?;
+            app.manage(SettingsState(RwLock::new(settings)));
+
+            let log_directory = app.path().app_log_dir()?;
+            std::fs::create_dir_all(&log_directory)?;
+            let default_panic_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |panic_info| {
+                default_panic_hook(panic_info);
+                if let Ok(mut file) = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_directory.join("crash.log"))
+                {
+                    let _ = writeln!(file, "{panic_info}");
+                }
+            }));
+
             // 创建托盘右键菜单
             let show_item = MenuItem::with_id(app, "show", "显示 Hydrogen Music", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -163,7 +222,7 @@ pub fn run() {
             // 拦截窗口关闭请求
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle();
-                if is_minimize_to_tray(app) {
+                if is_minimize_to_tray(&window.state::<SettingsState>()) {
                     // 最小化到托盘：隐藏窗口，阻止真正关闭
                     api.prevent_close();
                     let _ = window.hide();
@@ -181,6 +240,7 @@ pub fn run() {
             set_settings,
             get_last_playlist,
             save_last_playlist,
+            report_frontend_error,
             quit_app,
         ])
         .run(tauri::generate_context!())

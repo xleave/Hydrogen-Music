@@ -7,11 +7,13 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 const callbacks = new Map()
 
 function subscribe(name, callback) {
-  callbacks.set(name, callback)
+  if (!callbacks.has(name)) callbacks.set(name, new Set())
+  callbacks.get(name).add(callback)
+  return () => callbacks.get(name)?.delete(callback)
 }
 
 function emit(name, ...args) {
-  callbacks.get(name)?.({}, ...args)
+  for (const callback of callbacks.get(name) || []) callback({}, ...args)
 }
 
 async function scanLocalMusic(params) {
@@ -27,8 +29,7 @@ const noop = () => {}
 export function installWindowApi() {
   const appWindow = getCurrentWindow()
 
-  // 监听 Rust 发来的 tray-hide 事件：隐藏到托盘前只保存播放列表，不退出
-  listen('tray-hide', () => {
+  const trayListener = listen('tray-hide', () => {
     emit('beforeTrayHide')
   })
 
@@ -59,6 +60,7 @@ export function installWindowApi() {
     openLocalFolder: (path) => revealItemInDir(path),
     saveLastPlaylist: (playlist) => invoke('save_last_playlist', { playlist }),
     getLastPlaylist: () => invoke('get_last_playlist'),
+    reportFrontendError: (source, detail) => invoke('report_frontend_error', { source, detail }),
     setWindowTile: (title) => appWindow.setTitle(title),
     copyTxt: (txt) => navigator.clipboard.writeText(txt),
     playOrPauseMusic: (callback) => subscribe('playOrPauseMusic', callback),
@@ -73,5 +75,11 @@ export function installWindowApi() {
     changeTrayMusicPlaymode: noop,
     registerShortcuts: noop,
     unregisterShortcuts: noop,
+  }
+
+  return async () => {
+    callbacks.clear()
+    const unlisten = await trayListener
+    unlisten()
   }
 }

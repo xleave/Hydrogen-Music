@@ -2,8 +2,8 @@
   import { ref } from 'vue'
 
   function windowControl(option) {
-    if (option == 1) windowApi.windowMin('window-min')
-    else if (option == 2) windowApi.windowMax('window-max')
+    if (option === 1) windowApi.windowMin('window-min')
+    else if (option === 2) windowApi.windowMax('window-max')
     else windowApi.windowClose('window-close')
 }
 

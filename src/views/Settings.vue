@@ -81,9 +81,9 @@ const routerChange = () => {
 }
 
 const selectFolder = (type) => {
-    if (type == 'local') {
+    if (type === 'local') {
         windowApi.openFile().then(path => {
-            if (path && localFolder.value.indexOf(path) == -1) localFolder.value.push(path)
+            if (path && localFolder.value.indexOf(path) === -1) localFolder.value.push(path)
         })
     }
 }
@@ -143,8 +143,8 @@ const inputShortcut = (k) => {
     if (newShortcut.value.find(nk => nk.keyCode === k.keyCode)) return;
     else newShortcut.value.push(k)
     if ((k.keyCode >= 65 && k.keyCode <= 90) || (k.keyCode >= 48 && k.keyCode <= 57) || (k.keyCode >= 96 && k.keyCode <= 105) || (k.keyCode >= 112 && k.keyCode <= 123) || ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(k.key) || shortcutCharacter.includes(k.key)) {
-        if (selectedShortcut.value.type) shortcutsList.value.find(sc => (sc.id == selectedShortcut.value.id)).globalShortcut = updateShortcut()
-        else shortcutsList.value.find(sc => (sc.id == selectedShortcut.value.id)).shortcut = updateShortcut()
+        if (selectedShortcut.value.type) shortcutsList.value.find(sc => (sc.id === selectedShortcut.value.id)).globalShortcut = updateShortcut()
+        else shortcutsList.value.find(sc => (sc.id === selectedShortcut.value.id)).shortcut = updateShortcut()
         newShortcut.value = []
     }
 }
@@ -296,10 +296,10 @@ const setCustomFont = () => {
                         <div class="shortcuts" v-for="(item, index) in shortcutsList">
                             <div class="shortcut-name">{{ item.name }}</div>
                             <div class="shortcut"
-                                :class="{ 'shortcut-selected': (selectedShortcut && selectedShortcut.id == item.id && !selectedShortcut.type) }"
+                                :class="{ 'shortcut-selected': (selectedShortcut && selectedShortcut.id === item.id && !selectedShortcut.type) }"
                                 @click.stop="changeShortcut(item.id, false)">{{ formatShortcutName(item.shortcut) }}</div>
                             <div class="globalShortcut"
-                                :class="{ 'shortcut-selected': (selectedShortcut && selectedShortcut.id == item.id && selectedShortcut.type), 'forbid-shortcuts': !globalShortcuts }"
+                                :class="{ 'shortcut-selected': (selectedShortcut && selectedShortcut.id === item.id && selectedShortcut.type), 'forbid-shortcuts': !globalShortcuts }"
                                 @click.stop="changeShortcut(item.id, true)">{{ formatShortcutName(item.globalShortcut) }}
                             </div>
                         </div>
