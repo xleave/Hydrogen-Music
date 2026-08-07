@@ -81,10 +81,22 @@ export function play(url, autoplay) {
     autoplay,
     html5: true,
     preload: true,
-    format: ['mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus'],
     loop: playMode.value === 2,
     volume: volume.value,
     onend: handleTrackEnd,
+    onloaderror: (_, error) => {
+      console.error('[audio load]', error)
+      windowApi.reportFrontendError('audio.load', String(error)).catch((reportError) => {
+        console.error('[audio error reporter]', reportError)
+      })
+    },
+    onplayerror: (_, error) => {
+      console.error('[audio play]', error)
+      windowApi.reportFrontendError('audio.play', String(error)).catch((reportError) => {
+        console.error('[audio error reporter]', reportError)
+      })
+      currentMusic.value?.once('unlock', () => currentMusic.value?.play())
+    },
   })
 
   currentMusic.value.once('load', () => {
@@ -122,13 +134,14 @@ export async function getSongUrl(index, autoplay) {
   if (!track) return
 
   windowApi.setWindowTile(`${track.name} - ${track.ar?.[0]?.name || '其他'}`)
+  play(convertFileSrc(track.url), autoplay)
+
   const [cover] = await Promise.all([
     windowApi.getLocalMusicImage(track.url),
     loadLocalLyrics(track.url),
   ])
   localBase64Img.value = cover
   updateMediaSession()
-  play(convertFileSrc(track.url), autoplay)
   revealLyrics()
 }
 

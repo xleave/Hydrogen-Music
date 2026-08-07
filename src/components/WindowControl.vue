@@ -1,5 +1,7 @@
 <script setup>
-  import { ref } from 'vue'
+  import { useRouter } from 'vue-router'
+
+  const router = useRouter()
 
   function windowControl(option) {
     if (option === 1) windowApi.windowMin('window-min')
@@ -11,6 +13,9 @@
 
 <template>
   <div class="window-control">
+    <div @click="router.push('/settings')" class="settings" style="-webkit-app-region: no-drag">
+      <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="200" height="200"><path d="M511.997 551.041c-218.044 0-399.92 168.61-441.722 392.645l883.45-.439C911.607 719.432 729.83 551.041 511.997 551.041zM266.597 305.64c0 135.532 109.868 245.401 245.403 245.401 135.53 0 245.403-109.87 245.403-245.4C757.403 170.105 647.53 60.235 512 60.235c-135.535 0-245.403 109.87-245.403 245.406z"/></svg>
+    </div>
     <div @click="windowControl(1)" class="minimize" style="-webkit-app-region: no-drag">
       <svg t="1668091020963" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1210" width="200" height="200"><path d="M65.23884 456.152041 958.760137 456.152041l0 111.695918L65.23884 567.847959 65.23884 456.152041z" p-id="1211"></path></svg>
     </div>
@@ -25,16 +30,20 @@
 
 <style scoped lang="scss">
   .window-control{
-    width: 130Px;
     display: flex;
     flex-direction: row;
-    justify-content: space-around;
     align-items: center;
+    gap: 8Px;
     div{
+      width: 34Px;
+      height: 34Px;
+      box-sizing: border-box;
       display: flex;
+      align-items: center;
+      justify-content: center;
       opacity: 0.5;
       transition: 0.3s;
-      padding: 10Px;
+      padding: 8Px;
       &:hover{
         opacity: 1;
         cursor: pointer;
