@@ -18,9 +18,13 @@ const playerStore = usePlayerStore()
 const { songId, playMode } = storeToRefs(playerStore)
 const otherStore = useOtherStore()
 
+const searchQuery = ref('')
+const sortMode = ref('default')
+
 onBeforeRouteUpdate((to, from, next) => {
   updateLocalMusicDetail(to.name, to.query, to.params.id)
   currentType.value = to.name
+  searchQuery.value = ''
   next()
   const list = document.getElementById('local-list')
   if (list) list.scrollTop = 0
@@ -40,9 +44,28 @@ const getData = computed(() => {
 })
 
 const songCount = computed(() => currentSelectedSongs.value?.length || 0)
-const sortMode = ref('default')
+const filteredData = computed(() => {
+  const keyword = searchQuery.value.trim().toLocaleLowerCase()
+  if (!keyword) return getData.value
+
+  return getData.value.filter((item) => {
+    const common = item.common || {}
+    const haystack = [
+      common.title,
+      common.localTitle,
+      common.album,
+      common.albumartist,
+      ...(common.artists || []),
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .toLocaleLowerCase()
+    return haystack.includes(keyword)
+  })
+})
+
 const sortedData = computed(() => {
-  const list = getData.value
+  const list = filteredData.value
   if (sortMode.value === 'modified_desc') {
     return [...list].sort((a, b) => (b.common?.modifiedAt ?? 0) - (a.common?.modifiedAt ?? 0))
   }
@@ -54,6 +77,11 @@ function formatTrack(item) {
   const bits = item.format?.bitsPerSample ? `${item.format.bitsPerSample}Bits` : '--Bits'
   const bitrate = item.format?.bitrate ? `${Math.round(item.format.bitrate / 1000)}Kpbs` : '--Kpbs'
   return `${sampleRate}/${bits}/${bitrate}`
+}
+
+function displayAlbum(item) {
+  const album = item.common?.album
+  return album && album !== '其他' ? album : '—'
 }
 
 function play(id) {
@@ -114,9 +142,19 @@ function openMenu(event, item) {
 
       <div id="local-list" class="local-music-list">
         <div class="sort-bar">
-          <span class="sort-option" :class="{ 'sort-active': sortMode === 'default' }" @click="sortMode = 'default'">默认</span>
-          <span class="sort-sep">·</span>
-          <span class="sort-option" :class="{ 'sort-active': sortMode === 'modified_desc' }" @click="sortMode = 'modified_desc'">最近修改</span>
+          <div class="sort-options">
+            <span class="sort-option" :class="{ 'sort-active': sortMode === 'default' }" @click="sortMode = 'default'">默认</span>
+            <span class="sort-sep">·</span>
+            <span class="sort-option" :class="{ 'sort-active': sortMode === 'modified_desc' }" @click="sortMode = 'modified_desc'">最近修改</span>
+            <span v-if="searchQuery" class="search-count">{{ sortedData.length }} / {{ songCount }}</span>
+          </div>
+          <label class="list-search">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <circle cx="10.7" cy="10.7" r="6.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+              <path d="m15.3 15.3 4.3 4.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <input v-model="searchQuery" type="search" placeholder="搜索当前列表" autocomplete="off" spellcheck="false">
+          </label>
         </div>
 
         <RecycleScroller class="virtual-list" :items="sortedData" :item-size="68" key-field="nid" v-slot="{ item, index }">
@@ -142,6 +180,7 @@ function openMenu(event, item) {
                   {{ singer }}{{ singerIndex === item.common.artists.length - 1 ? '' : '/' }}
                 </span>
               </div>
+              <span class="item-album" :title="displayAlbum(item)">{{ displayAlbum(item) }}</span>
               <span class="item-time">{{ songTime2(item.format.duration) }}</span>
             </div>
           </div>
@@ -246,9 +285,20 @@ function openMenu(event, item) {
       &:hover::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, .04); }
 
       .sort-bar {
-        padding: 8Px 8Px 6Px 8Px;
+        min-height: 34Px;
+        padding: 6Px 8Px 6Px 8Px;
+        box-sizing: border-box;
         display: flex;
         align-items: center;
+        justify-content: space-between;
+        gap: 18Px;
+
+        .sort-options {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+        }
+
         .sort-option {
           font: 11Px SourceHanSansCN-Bold;
           color: rgba(0, 0, 0, .38);
@@ -258,7 +308,52 @@ function openMenu(event, item) {
           &:hover { color: rgba(0, 0, 0, .65); }
           &.sort-active { color: black; }
         }
+
         .sort-sep { font-size: 11Px; color: rgba(0, 0, 0, .2); padding: 0 1Px; }
+        .search-count {
+          margin-left: 8Px;
+          font: 10Px Bender-Bold;
+          color: rgba(0, 0, 0, .38);
+          white-space: nowrap;
+        }
+
+        .list-search {
+          width: 210Px;
+          height: 26Px;
+          flex: 0 0 210Px;
+          display: flex;
+          align-items: center;
+          border-bottom: 1Px solid rgba(0, 0, 0, .18);
+          transition: border-color .18s, background-color .18s;
+
+          &:focus-within {
+            border-bottom-color: rgba(0, 0, 0, .7);
+            background-color: rgba(255, 255, 255, .16);
+          }
+
+          svg {
+            margin: 0 7Px 0 5Px;
+            width: 14Px;
+            height: 14Px;
+            flex: 0 0 14Px;
+            color: rgba(0, 0, 0, .52);
+          }
+
+          input {
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            appearance: none;
+            font: 11Px SourceHanSansCN-Bold;
+            color: black;
+
+            &::placeholder { color: rgba(0, 0, 0, .34); }
+            &::-webkit-search-cancel-button { opacity: .5; cursor: pointer; }
+          }
+        }
       }
 
       .virtual-list { height: calc(100% - 34Px); }
@@ -273,7 +368,7 @@ function openMenu(event, item) {
         &:hover { cursor: default; background-color: rgba(0, 0, 0, .045); }
 
         .item-title {
-          width: 50%;
+          width: 46%;
           display: flex;
           align-items: center;
 
@@ -318,19 +413,28 @@ function openMenu(event, item) {
 
         .item-other {
           margin-left: 14Px;
-          width: 45%;
-          display: flex;
-          justify-content: space-between;
+          width: 50%;
+          display: grid;
+          grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 72Px;
+          align-items: center;
+          column-gap: 24Px;
           span { font: 14Px SourceHanSansCN-Bold; color: black; }
-          .item-author {
-            width: 70%;
+
+          .item-author,
+          .item-album {
+            min-width: 0;
             text-align: left;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+          }
+
+          .item-author {
             .item-singer { transition: .1s; &:hover { cursor: pointer; opacity: .6; } }
           }
-          .item-time { width: 30%; }
+
+          .item-album { color: rgba(0, 0, 0, .58); }
+          .item-time { width: 72Px; text-align: center; white-space: nowrap; }
         }
       }
 

@@ -19,7 +19,6 @@ const {
   lyricsObjArr,
   playing,
   playerChangeSong,
-  progress,
   rlyricSize,
   songList,
   tlyricSize,
@@ -31,10 +30,16 @@ const interludeIndex = ref(null)
 const interludeAnimation = ref(false)
 const interludeRemainingTime = ref(0)
 const isLyricActive = ref(true)
-const manualScrollOffset = ref(0)
+const lyricTrack = ref(null)
 let activeTimer = null
 let scrollTimer = null
 let interludeTimer = null
+let wheelFrame = null
+let returnTimer = null
+let manualScrollOffset = 0
+let pendingWheelDelta = 0
+let wheelVelocity = 0
+let isReturning = false
 
 const timestampPattern = /\[(\d{2}):(\d{2})(?:\.|:)(\d{2,3})\]/
 
@@ -108,6 +113,7 @@ const displayedLyrics = computed(() => {
     lyric.value = null
     activeIndex.value = -1
     interludeAnimation.value = false
+    resetManualScroll(true)
     if (!lyricShow.value && !widgetState.value) {
       lyricShow.value = true
       playerChangeSong.value = false
@@ -129,8 +135,46 @@ const lineHeight = computed(() => {
 const scrollAreaHeight = computed(() => displayedLyrics.value.length * lineHeight.value)
 const lineOffset = computed(() => {
   const base = -(scrollAreaHeight.value - 260)
-  return base - (activeIndex.value + 1) * lineHeight.value + manualScrollOffset.value
+  return base - (activeIndex.value + 1) * lineHeight.value
 })
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function setTrackOffset(offset) {
+  manualScrollOffset = clamp(offset, -scrollAreaHeight.value, scrollAreaHeight.value)
+  if (lyricTrack.value) {
+    lyricTrack.value.style.transform = `translate3d(0, ${manualScrollOffset}px, 0)`
+  }
+}
+
+function cancelWheelFrame() {
+  if (wheelFrame !== null) cancelAnimationFrame(wheelFrame)
+  wheelFrame = null
+  pendingWheelDelta = 0
+  wheelVelocity = 0
+}
+
+function cancelReturnAnimation() {
+  if (returnTimer !== null) clearTimeout(returnTimer)
+  returnTimer = null
+  isReturning = false
+  lyricTrack.value?.classList.remove('lyric-track-returning')
+}
+
+function resetManualScroll(immediate = false) {
+  clearTimeout(scrollTimer)
+  scrollTimer = null
+  cancelWheelFrame()
+  cancelReturnAnimation()
+  setTrackOffset(0)
+  isLyricActive.value = true
+  if (immediate && lyricTrack.value) lyricTrack.value.style.transition = 'none'
+  requestAnimationFrame(() => {
+    if (lyricTrack.value) lyricTrack.value.style.transition = ''
+  })
+}
 
 function findActiveLine(seek) {
   const lines = displayedLyrics.value
@@ -154,8 +198,11 @@ function updateActiveLine() {
   if (typeof seek !== 'number') return
   const nextIndex = findActiveLine(seek)
   if (nextIndex !== activeIndex.value) {
+    const previousIndex = activeIndex.value
+    if (!isLyricActive.value && !isReturning && previousIndex >= -1) {
+      setTrackOffset(manualScrollOffset + (nextIndex - previousIndex) * lineHeight.value)
+    }
     activeIndex.value = nextIndex
-    manualScrollOffset.value = 0
   }
 
   const nextLine = displayedLyrics.value[nextIndex + 1]
@@ -186,7 +233,7 @@ function startActiveTimer() {
 function lineStyle(index) {
   const distance = Math.abs(index - activeIndex.value)
   return {
-    transform: `translateY(${lineOffset.value}px)`,
+    transform: `translate3d(0, ${lineOffset.value}px, 0)`,
     transitionDelay: isLyricDelay.value && index >= activeIndex.value
       ? `${Math.min((index - activeIndex.value) * 0.05, 0.5)}s`
       : '0s',
@@ -197,22 +244,65 @@ function lineStyle(index) {
 }
 
 function changeProgressLyric(time, index) {
+  resetManualScroll(true)
   activeIndex.value = index
-  manualScrollOffset.value = 0
   changeProgress(time)
 }
 
-function handleWheel(event) {
-  isLyricActive.value = false
-  manualScrollOffset.value = Math.max(
-    -scrollAreaHeight.value,
-    Math.min(scrollAreaHeight.value, manualScrollOffset.value - event.deltaY),
-  )
-  clearTimeout(scrollTimer)
-  scrollTimer = setTimeout(() => {
+function normalizeWheelDelta(event) {
+  let delta = event.deltaY
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 18
+  else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= 180
+  return clamp(delta, -180, 180)
+}
+
+function runWheelFrame() {
+  wheelFrame = null
+  if (pendingWheelDelta !== 0) {
+    wheelVelocity += pendingWheelDelta * 0.24
+    pendingWheelDelta = 0
+  }
+  wheelVelocity = clamp(wheelVelocity, -72, 72)
+  if (Math.abs(wheelVelocity) < 0.08) {
+    wheelVelocity = 0
+    return
+  }
+
+  setTrackOffset(manualScrollOffset - wheelVelocity)
+  wheelVelocity *= 0.82
+  wheelFrame = requestAnimationFrame(runWheelFrame)
+}
+
+function returnToActiveLine() {
+  cancelWheelFrame()
+  cancelReturnAnimation()
+  const track = lyricTrack.value
+  if (!track) {
+    manualScrollOffset = 0
     isLyricActive.value = true
-    manualScrollOffset.value = 0
-  }, 3000)
+    return
+  }
+
+  isReturning = true
+  track.classList.add('lyric-track-returning')
+  requestAnimationFrame(() => setTrackOffset(0))
+  returnTimer = setTimeout(() => {
+    track.classList.remove('lyric-track-returning')
+    returnTimer = null
+    isReturning = false
+    isLyricActive.value = true
+  }, 620)
+}
+
+function handleWheel(event) {
+  if (isReturning) cancelReturnAnimation()
+  if (isLyricActive.value) isLyricActive.value = false
+
+  pendingWheelDelta = clamp(pendingWheelDelta + normalizeWheelDelta(event), -360, 360)
+  if (wheelFrame === null) wheelFrame = requestAnimationFrame(runWheelFrame)
+
+  clearTimeout(scrollTimer)
+  scrollTimer = setTimeout(returnToActiveLine, 3000)
 }
 
 watch(
@@ -224,17 +314,19 @@ watch(
 )
 
 watch(lyricAnimationRevision, () => {
-  manualScrollOffset.value = 0
+  resetManualScroll(true)
 })
 
 watch([lyricSize, tlyricSize, rlyricSize, lyricType], () => {
-  manualScrollOffset.value = 0
+  resetManualScroll(true)
 }, { deep: true })
 
 onBeforeUnmount(() => {
   clearInterval(activeTimer)
   clearTimeout(scrollTimer)
   clearTimeout(interludeTimer)
+  clearTimeout(returnTimer)
+  cancelWheelFrame()
 })
 </script>
 
@@ -243,29 +335,31 @@ onBeforeUnmount(() => {
     <Transition name="fade">
       <div v-show="lyricsObjArr && lyricShow && lyricType.includes('original')" class="lyric-area" @wheel.prevent="handleWheel">
         <div class="lyric-scroll-area" :style="{ height: `${scrollAreaHeight}px` }"></div>
-        <div class="lyric-line" :style="lineStyle(index)" v-for="(item, index) in displayedLyrics" :key="`${item.time}-${index}`" v-show="item.lyric">
-          <div class="line" @click="changeProgressLyric(item.time, index)" :class="{'line-highlight': index === activeIndex, 'lyric-inactive': !isLyricActive || item.active}">
-            <span class="roma" :style="{'font-size': `${rlyricSize}px`}" v-if="item.rlyric && lyricType.includes('roma')">{{item.rlyric}}</span>
-            <span class="original" :style="{'font-size': `${lyricSize}px`}" v-if="lyricType.includes('original')">{{item.lyric}}</span>
-            <span class="trans" :style="{'font-size': `${tlyricSize}px`}" v-if="item.tlyric && lyricType.includes('trans')">{{item.tlyric}}</span>
-            <div class="hilight" :class="{'hilight-active': index === activeIndex}"></div>
-          </div>
-          <div v-if="activeIndex !== -1 && interludeIndex === index" class="music-interlude" :class="{'music-interlude-in': interludeAnimation}">
-            <div class="interlude-left">
-              <div class="diamond">
-                <div class="diamond-inner"></div>
-              </div>
+        <div ref="lyricTrack" class="lyric-track">
+          <div class="lyric-line" :style="lineStyle(index)" v-for="(item, index) in displayedLyrics" :key="`${item.time}-${index}`" v-show="item.lyric">
+            <div class="line" @click="changeProgressLyric(item.time, index)" :class="{'line-highlight': index === activeIndex, 'lyric-inactive': !isLyricActive || item.active}">
+              <span class="roma" :style="{'font-size': `${rlyricSize}px`}" v-if="item.rlyric && lyricType.includes('roma')">{{item.rlyric}}</span>
+              <span class="original" :style="{'font-size': `${lyricSize}px`}" v-if="lyricType.includes('original')">{{item.lyric}}</span>
+              <span class="trans" :style="{'font-size': `${tlyricSize}px`}" v-if="item.tlyric && lyricType.includes('trans')">{{item.tlyric}}</span>
+              <div class="hilight" :class="{'hilight-active': index === activeIndex}"></div>
             </div>
-            <div class="interlude-right">
-              <div class="triangle"></div>
-              <span class="remaining">THE REMAINING TIME: {{interludeRemainingTime}}</span>
-              <div class="interlude-title">
-                <span class="title">MUSIC INTERLUDE</span>
-                <div class="title-style">
-                  <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="49" height="50" viewBox="0 0 49 50" fill="none"><defs><rect id="path_0" x="0" y="0" width="49" height="50"/></defs><g opacity="1" transform="translate(0 0)  rotate(0 24.5 25)"><mask id="bg-mask-0" fill="white"><use xlink:href="#path_0"/></mask><g mask="url(#bg-mask-0)"><path id="line" style="fill:#FFFFFF" transform="translate(46 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(46 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(27 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(27 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(48 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(48 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(19 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:2; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(19 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(34 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(34 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(16 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(16 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(43 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(43 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(43 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(43 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(23 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:2; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(23 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(12 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:2; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(12 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(5 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:1; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(5 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(8 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:2; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(8 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(30 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:2; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(30 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(1 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:3; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(1 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/><path id="line" style="fill:#FFFFFF" transform="translate(40 0)  rotate(0 0.0005 50)" opacity="1" d=""/><path id="line" style="stroke:#FFFFFF; stroke-width:3; stroke-opacity:1; stroke-dasharray:0 0" transform="translate(40 0)  rotate(0 0.0005 50)" d="M0,0L0,100 "/></g></g></svg>
+            <div v-if="activeIndex !== -1 && interludeIndex === index" class="music-interlude" :class="{'music-interlude-in': interludeAnimation}">
+              <div class="interlude-left">
+                <div class="diamond">
+                  <div class="diamond-inner"></div>
                 </div>
               </div>
-              <div class="interlude-progress"></div>
+              <div class="interlude-right">
+                <div class="triangle"></div>
+                <span class="remaining">THE REMAINING TIME: {{interludeRemainingTime}}</span>
+                <div class="interlude-title">
+                  <span class="title">MUSIC INTERLUDE</span>
+                  <div class="title-style">
+                    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="49" height="50" viewBox="0 0 49 50" fill="none"><defs><rect id="path_0" x="0" y="0" width="49" height="50"/></defs><g opacity="1" transform="translate(0 0) rotate(0 24.5 25)"><mask id="bg-mask-0" fill="white"><use xlink:href="#path_0"/></mask><g mask="url(#bg-mask-0)"><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(46 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(27 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(48 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:2" transform="translate(19 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(34 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(16 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(43 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:2" transform="translate(23 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:2" transform="translate(12 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:1" transform="translate(5 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:2" transform="translate(8 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:2" transform="translate(30 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:3" transform="translate(1 0)" d="M0,0L0,100"/><path style="stroke:#FFFFFF;stroke-width:3" transform="translate(40 0)" d="M0,0L0,100"/></g></g></svg>
+                  </div>
+                </div>
+                <div class="interlude-progress"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -302,6 +396,13 @@ onBeforeUnmount(() => {
       .lyric-scroll-area{
         width: 100%;
         transition: 0.3s;
+      }
+      .lyric-track{
+        transform: translate3d(0, 0, 0);
+        will-change: transform;
+      }
+      .lyric-track-returning{
+        transition: transform 0.58s cubic-bezier(.4,0,.12,1);
       }
       .lyric-line{
         margin-bottom: 10Px;
@@ -530,7 +631,6 @@ onBeforeUnmount(() => {
       right: 1.5vh;
     }
 
-
     $boderPosition: -0.75 + vh;
     .border{
       width: 1.5vh;
@@ -545,7 +645,6 @@ onBeforeUnmount(() => {
     .border2{
       top: $boderPosition;
       right: $boderPosition;
-
     }
     .border3{
       bottom: $boderPosition;
