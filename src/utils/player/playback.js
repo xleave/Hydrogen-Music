@@ -1,5 +1,4 @@
 import { markRaw } from 'vue'
-import { Howl, Howler } from 'howler'
 import { playerRefs } from './state'
 import {
   loadLocalLyrics,
@@ -24,29 +23,87 @@ const {
 
 let progressFrame = null
 let lastProgressUpdate = 0
+let statusPending = false
 let sequentialPlaybackEnded = false
 let nextTrackHandler = null
 let audioRequestId = 0
-let currentAudioUrl = null
+let loadQueue = Promise.resolve()
 let playPending = false
 
-const audioTypes = {
-  mp3: 'audio/mpeg',
-  flac: 'audio/flac',
-  wav: 'audio/wav',
-  aac: 'audio/aac',
-  m4a: 'audio/mp4',
-  ogg: 'audio/ogg',
-  opus: 'audio/ogg',
+function reportAudioError(source, error) {
+  const detail = error instanceof Error ? error.message : String(error)
+  console.error(`[${source}]`, error)
+  windowApi.reportFrontendError(source, detail).catch((reportError) => {
+    console.error('[audio error reporter]', reportError)
+  })
 }
 
-function audioFormat(filePath) {
-  return filePath.split('.').pop()?.toLowerCase() || 'mp3'
-}
+class NativeMusic {
+  constructor(status) {
+    this.position = status.position
+    this.trackDuration = status.duration
+    this.loaded = true
+    this.looping = false
+    this.endHandled = false
+  }
 
-function resumeAudioContext() {
-  Howler.volume(volume.value)
-  return Howler.ctx?.resume?.() || Promise.resolve()
+  applyStatus(status) {
+    this.position = status.position
+    this.trackDuration = status.duration
+    return status
+  }
+
+  play() {
+    return windowApi.audioPlay().then((status) => this.applyStatus(status))
+  }
+
+  pause() {
+    return windowApi.audioPause().then((status) => this.applyStatus(status))
+  }
+
+  seek(position) {
+    if (position === undefined) return this.position
+    this.position = position
+    this.endHandled = false
+    windowApi.audioSeek(position)
+      .then((status) => this.applyStatus(status))
+      .catch((error) => reportAudioError('audio.seek', error))
+    return position
+  }
+
+  duration() {
+    return this.trackDuration
+  }
+
+  volume(value) {
+    if (value === undefined) return volume.value
+    windowApi.audioSetVolume(value).catch((error) => reportAudioError('audio.volume', error))
+    return value
+  }
+
+  loop(value) {
+    if (value === undefined) return this.looping
+    this.looping = value
+    return value
+  }
+
+  state() {
+    return this.loaded ? 'loaded' : 'unloaded'
+  }
+
+  once(event, handler) {
+    if (event === 'load' && this.loaded) queueMicrotask(handler)
+  }
+
+  sync() {
+    return windowApi.audioStatus().then((status) => this.applyStatus(status))
+  }
+
+  unload() {
+    this.loaded = false
+    if (currentMusic.value !== this) return Promise.resolve()
+    return windowApi.audioStop().catch((error) => reportAudioError('audio.stop', error))
+  }
 }
 
 export function registerNextTrackHandler(handler) {
@@ -64,12 +121,34 @@ export function stopProgress() {
 }
 
 function updateProgress(timestamp = 0) {
-  if (timestamp - lastProgressUpdate >= 100 || lastProgressUpdate === 0) {
-    const seek = currentMusic.value?.seek()
-    if (typeof seek === 'number') progress.value = Math.min(seek, time.value)
-    lastProgressUpdate = timestamp
-  }
   if (playing.value) progressFrame = requestAnimationFrame(updateProgress)
+  if (
+    statusPending
+    || (lastProgressUpdate !== 0 && timestamp - lastProgressUpdate < 200)
+  ) return
+
+  const music = currentMusic.value
+  if (!music) return
+  lastProgressUpdate = timestamp
+  statusPending = true
+  music.sync()
+    .then((status) => {
+      if (music !== currentMusic.value) return
+      progress.value = Math.min(status.position, status.duration)
+      time.value = Math.floor(status.duration)
+      if (status.ended && !music.endHandled) {
+        music.endHandled = true
+        handleTrackEnd()
+      }
+    })
+    .catch((error) => {
+      stopProgress()
+      playing.value = false
+      reportAudioError('audio.status', error)
+    })
+    .finally(() => {
+      statusPending = false
+    })
 }
 
 export function startProgress() {
@@ -86,65 +165,29 @@ function handleTrackEnd() {
     return
   }
   if (playMode.value === 2) {
+    progress.value = 0
     resetLyricAnimation()
+    getSongUrl(currentIndex.value, true)
     return
   }
   nextTrackHandler?.()
 }
 
-export function play(url, autoplay, format) {
-  if (currentMusic.value) {
-    stopProgress()
-    currentMusic.value.unload()
-  }
-  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
-  currentAudioUrl = url
+export async function play(filePath, autoplay, requestId = audioRequestId) {
+  const load = () => windowApi.audioLoad(filePath, autoplay, volume.value)
+  loadQueue = loadQueue.then(load, load)
+  const status = await loadQueue
+  if (requestId !== audioRequestId) return null
 
-  playPending = autoplay
-  currentMusic.value = markRaw(new Howl({
-    src: [url],
-    format: [format],
-    autoplay,
-    html5: false,
-    pool: 1,
-    preload: true,
-    loop: playMode.value === 2,
-    volume: volume.value,
-    onend: handleTrackEnd,
-    onloaderror: (_, error) => {
-      playPending = false
-      playing.value = false
-      console.error('[audio load]', error)
-      windowApi.reportFrontendError('audio.load', String(error)).catch((reportError) => {
-        console.error('[audio error reporter]', reportError)
-      })
-    },
-    onplayerror: (_, error) => {
-      playPending = false
-      playing.value = false
-      console.error('[audio play]', error)
-      windowApi.reportFrontendError('audio.play', String(error)).catch((reportError) => {
-        console.error('[audio error reporter]', reportError)
-      })
-    },
-  }))
-
-  currentMusic.value.once('load', () => {
-    time.value = Math.floor(currentMusic.value.duration())
-  })
-  currentMusic.value.on('play', () => {
-    playPending = false
-    startProgress()
-    playing.value = true
-    windowApi.playOrPauseMusicCheck(true)
-  })
-  currentMusic.value.on('pause', () => {
-    playPending = false
-    stopProgress()
-    playing.value = false
-    windowApi.playOrPauseMusicCheck(false)
-  })
-  currentMusic.value.on('stop', stopProgress)
+  const music = markRaw(new NativeMusic(status))
+  music.loop(playMode.value === 2)
+  currentMusic.value = music
+  time.value = Math.floor(status.duration)
+  playing.value = status.playing
+  playPending = false
+  windowApi.playOrPauseMusicCheck(status.playing)
+  if (status.playing) startProgress()
+  return music
 }
 
 export function updateMediaSession() {
@@ -162,7 +205,7 @@ export function updateMediaSession() {
 
 export async function getSongUrl(index, autoplay) {
   const track = songList.value?.[index]
-  if (!track) return
+  if (!track) return null
   const requestId = ++audioRequestId
 
   windowApi.getLocalMusicImage(track.url).then((cover) => {
@@ -174,11 +217,16 @@ export async function getSongUrl(index, autoplay) {
     if (requestId === audioRequestId) revealLyrics()
   })
 
-  const audioData = await windowApi.getLocalMusicAudio(track.url)
-  if (requestId !== audioRequestId) return
-  const format = audioFormat(track.url)
-  const blob = new Blob([audioData], { type: audioTypes[format] || 'application/octet-stream' })
-  play(URL.createObjectURL(blob), autoplay, format)
+  try {
+    return await play(track.url, autoplay, requestId)
+  } catch (error) {
+    if (requestId === audioRequestId) {
+      playPending = false
+      playing.value = false
+      reportAudioError('audio.load', error)
+    }
+    return null
+  }
 }
 
 export function addSong(id, index, autoplay = false) {
@@ -188,30 +236,14 @@ export function addSong(id, index, autoplay = false) {
     : list.findIndex((track) => track.id === id)
   if (!list[targetIndex]) return
 
-  resumeAudioContext().catch((error) => {
-    console.error('[audio context]', error)
-  })
-
+  stopProgress()
+  playPending = autoplay
+  playing.value = false
   progress.value = 0
   prepareLyricsForTrackChange()
   currentIndex.value = targetIndex
   songId.value = list[targetIndex].id
-
-  const startTrack = () => getSongUrl(targetIndex, autoplay)
-  if (!currentMusic.value || volume.value === 0) {
-    startTrack()
-    return
-  }
-
-  const state = currentMusic.value.state()
-  if (state === 'loading' || state === 'unloaded') {
-    currentMusic.value.unload()
-    startTrack()
-    return
-  }
-
-  currentMusic.value.fade(volume.value, 0, 200)
-  currentMusic.value.once('fade', startTrack)
+  getSongUrl(targetIndex, autoplay)
 }
 
 export function startMusic() {
@@ -220,7 +252,6 @@ export function startMusic() {
     playMode.value === 0
     && currentIndex.value === songList.value.length - 1
     && sequentialPlaybackEnded
-    && currentMusic.value.seek() === 0
   ) {
     sequentialPlaybackEnded = false
     nextTrackHandler?.()
@@ -229,11 +260,17 @@ export function startMusic() {
   if (!playing.value && !playPending) {
     playPending = true
     const music = currentMusic.value
-    resumeAudioContext()
-      .then(() => music.play())
+    music.play()
+      .then((status) => {
+        if (music !== currentMusic.value) return
+        playPending = false
+        playing.value = status.playing
+        windowApi.playOrPauseMusicCheck(status.playing)
+        if (status.playing) startProgress()
+      })
       .catch((error) => {
         playPending = false
-        console.error('[audio context]', error)
+        reportAudioError('audio.play', error)
       })
   }
   resetLyricAnimation(700)
@@ -242,8 +279,10 @@ export function startMusic() {
 export function pauseMusic() {
   stopProgress()
   if (!playing.value || !currentMusic.value) return
-  currentMusic.value.fade(volume.value, 0, 200)
-  currentMusic.value.once('fade', () => currentMusic.value?.pause())
+  const music = currentMusic.value
+  playing.value = false
+  windowApi.playOrPauseMusicCheck(false)
+  music.pause().catch((error) => reportAudioError('audio.pause', error))
 }
 
 export function changeProgress(toTime) {
@@ -265,8 +304,6 @@ export function changeProgressByDragEnd(toTime) {
 export function disposePlayback() {
   stopProgress()
   currentMusic.value?.unload()
-  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
-  currentAudioUrl = null
   playPending = false
   nextTrackHandler = null
 }

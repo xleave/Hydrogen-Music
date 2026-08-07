@@ -1,3 +1,4 @@
+mod audio;
 mod library;
 mod storage;
 
@@ -15,7 +16,6 @@ use std::{
     sync::RwLock,
 };
 use tauri::{
-    ipc::Response,
     AppHandle, Emitter, Manager, State,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -87,14 +87,6 @@ fn read_lyrics(file_path: String) -> Result<Option<String>, String> {
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-async fn read_audio_file(app: AppHandle, file_path: String) -> Result<Response, String> {
-    let path = authorized_audio_path(&app.state::<SettingsState>(), &file_path)?;
-    std::fs::read(path)
-        .map(Response::new)
-        .map_err(|error| error.to_string())
-}
-
 fn authorized_audio_path(settings: &SettingsState, file_path: &str) -> Result<PathBuf, String> {
     let audio_path = std::fs::canonicalize(file_path).map_err(|error| error.to_string())?;
     let settings = settings.0.read().map_err(|error| error.to_string())?;
@@ -112,6 +104,51 @@ fn authorized_audio_path(settings: &SettingsState, file_path: &str) -> Result<Pa
         return Err("audio file is outside the configured music folders".to_string());
     }
     Ok(audio_path)
+}
+
+#[tauri::command]
+fn audio_load(
+    settings: State<'_, SettingsState>,
+    audio: State<'_, audio::AudioState>,
+    file_path: String,
+    autoplay: bool,
+    volume: f32,
+) -> Result<audio::AudioStatus, String> {
+    let path = authorized_audio_path(&settings, &file_path)?;
+    audio.load(&path, autoplay, volume)
+}
+
+#[tauri::command]
+fn audio_play(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    audio.play()
+}
+
+#[tauri::command]
+fn audio_pause(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    audio.pause()
+}
+
+#[tauri::command]
+fn audio_seek(
+    audio: State<'_, audio::AudioState>,
+    position: f64,
+) -> Result<audio::AudioStatus, String> {
+    audio.seek(position)
+}
+
+#[tauri::command]
+fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<(), String> {
+    audio.set_volume(volume)
+}
+
+#[tauri::command]
+fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    audio.status()
+}
+
+#[tauri::command]
+fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
+    audio.stop()
 }
 
 #[tauri::command]
@@ -191,6 +228,7 @@ async fn quit_app(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(audio::AudioState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -264,7 +302,13 @@ pub fn run() {
             scan_local_music,
             read_cover,
             read_lyrics,
-            read_audio_file,
+            audio_load,
+            audio_play,
+            audio_pause,
+            audio_seek,
+            audio_set_volume,
+            audio_status,
+            audio_stop,
             get_settings,
             set_settings,
             get_last_playlist,
