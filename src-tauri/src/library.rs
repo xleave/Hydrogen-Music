@@ -50,6 +50,8 @@ struct CommonMetadata {
     genre: Vec<String>,
     year: Option<u32>,
     has_lyrics: bool,
+    /// 文件最后修改时间（Unix 毫秒时间戳），用于排序
+    modified_at: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -222,6 +224,11 @@ fn read_track(path: &Path) -> Result<Node, String> {
                 .unwrap_or_default(),
             year,
             has_lyrics,
+            modified_at: std::fs::metadata(path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64),
         }),
         format: Some(FormatMetadata {
             bitrate: properties.audio_bitrate().map(|v| v * 1000),
@@ -262,6 +269,11 @@ fn fallback_track(path: &Path) -> Node {
             genre: Vec::new(),
             year: None,
             has_lyrics: path.with_extension("lrc").is_file(),
+            modified_at: std::fs::metadata(path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64),
         }),
         format: Some(FormatMetadata {
             bitrate: None,
