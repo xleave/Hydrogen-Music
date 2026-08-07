@@ -6,50 +6,47 @@ import { noticeOpen } from './dialog'
 
 const localStore = useLocalStore(pinia)
 const { localMusicFolder, localMusicList, localMusicClassify, isRefreshLocalFile } = storeToRefs(localStore)
-let artistArr = []
-let albumArr = []
+
+// 使用 Map 实现 O(1) 查找，替代原来的 O(n) findIndex
+let artistMap = new Map()
+let albumMap = new Map()
 
 function classifyAdd(song) {
-    if(song.common.artists == undefined) song.common.artists = ['其他']
-    else if(song.common.artists[0].indexOf(',') != -1) song.common.artists = song.common.artists[0].split(', ')
-    song.common.artists.forEach(artist => {
-        let index = (artistArr || []).findIndex((item) => item.name == artist)
-        if(index == -1) {
-            artistArr.push({
+    // Rust 端已完成艺术家分割，直接使用
+    const artists = song.common.artists?.length ? song.common.artists : ['其他']
+    artists.forEach(artist => {
+        if (!artistMap.has(artist)) {
+            artistMap.set(artist, {
                 id: nanoid(),
                 type: 'artist',
                 name: artist,
-                songs: [song]
+                songs: []
             })
-        } else {
-            artistArr[index].songs.push(song)
         }
+        artistMap.get(artist).songs.push(song)
     })
-    
-    if(song.common.album == undefined) song.common.album = '其他'
-    let index = (albumArr || []).findIndex((item) => item.name == song.common.album)
-    if(index == -1) {
-        albumArr.push({
+
+    const album = song.common.album || '其他'
+    if (!albumMap.has(album)) {
+        albumMap.set(album, {
             id: nanoid(),
             type: 'album',
-            name: song.common.album,
-            songs: [song]
+            name: album,
+            songs: []
         })
-    } else {
-        albumArr[index].songs.push(song)
     }
+    albumMap.get(album).songs.push(song)
 }
 
 function classify(arr) {
     arr.forEach(item => {
-        if(item.children) classify(item.children)
+        if (item.children) classify(item.children)
         else classifyAdd(item)
     })
-    let result = {
-        artists: artistArr,
-        albums: albumArr
+    return {
+        artists: Array.from(artistMap.values()),
+        albums: Array.from(albumMap.values())
     }
-    return result
 }
 
 export function scanMusic(params) {
@@ -64,8 +61,9 @@ windowApi.localMusicFiles((event, localData) => {
     if(localData.type == 'local') {
         localMusicFolder.value = localData.dirTree
         localMusicList.value = localData.locaFilesMetadata
-        artistArr = []
-        albumArr = []
+        // 重置 Map，避免多次扫描累积
+        artistMap = new Map()
+        albumMap = new Map()
         localMusicClassify.value = classify(localData.locaFilesMetadata)
     }
     if(isRefreshLocalFile.value) {

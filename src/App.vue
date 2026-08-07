@@ -22,7 +22,7 @@
   <div class="globalWidget">
     <Title class="widget-title"></Title>
   </div>
-  <div class="dragBar">
+  <div class="dragBar" data-tauri-drag-region>
     <WindowControl class="window-control"></WindowControl>
   </div>
   <Transition name="widget">

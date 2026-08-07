@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 
@@ -26,15 +27,25 @@ const noop = () => {}
 export function installWindowApi() {
   const appWindow = getCurrentWindow()
 
+  // 监听 Rust 发来的 tray-hide 事件：隐藏到托盘前只保存播放列表，不退出
+  listen('tray-hide', () => {
+    emit('beforeTrayHide')
+  })
+
   window.windowApi = {
     windowMin: () => appWindow.minimize(),
     windowMax: async () => (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize(),
+    // 直接关闭窗口：Rust on_window_event 会根据 quitApp 设置决定隐藏到托盘还是退出
     windowClose: () => appWindow.close(),
     toRegister: (url) => openUrl(url),
+    // beforeQuit 事件由 tray-hide 触发，用于在驻留托盘前保存播放列表
     beforeQuit: (callback) => subscribe('beforeQuit', callback),
+    // beforeTrayHide：仅保存播放列表，不退出（托盘隐藏时触发）
+    beforeTrayHide: (callback) => subscribe('beforeTrayHide', callback),
+    // exitApp：保存播放列表后调用 quit_app 命令强制退出（绕过 quitApp 设置）
     exitApp: async (playlist) => {
       await invoke('save_last_playlist', { playlist })
-      await appWindow.close()
+      await invoke('quit_app')
     },
     scanLocalMusic,
     localMusicFiles: (callback) => subscribe('localMusicFiles', callback),

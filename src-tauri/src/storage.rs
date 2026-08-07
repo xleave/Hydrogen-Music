@@ -56,7 +56,7 @@ pub fn default_settings() -> Value {
         ],
         "other": {
             "globalShortcuts": false,
-            "quitApp": "quit",
+            "quitApp": "minimize",
             "customFont": ""
         }
     })
