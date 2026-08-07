@@ -14,7 +14,9 @@ const preventContextMenu = (event) => event.preventDefault()
 document.addEventListener('contextmenu', preventContextMenu)
 
 function reportFrontendError(error, source) {
-  const detail = error instanceof Error ? error.stack || error.message : String(error)
+  const detail = error instanceof Error
+    ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+    : String(error)
   console.error(`[${source}]`, detail)
   windowApi?.reportFrontendError?.(source, detail)?.catch((reportError) => {
     console.error('[error reporter]', reportError)

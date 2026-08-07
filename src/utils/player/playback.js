@@ -1,4 +1,5 @@
-import { Howl, Howler } from 'howler'
+import { markRaw } from 'vue'
+import { Howl } from 'howler'
 import { playerRefs } from './state'
 import {
   loadLocalLyrics,
@@ -27,6 +28,7 @@ let sequentialPlaybackEnded = false
 let nextTrackHandler = null
 let audioRequestId = 0
 let currentAudioUrl = null
+let playPending = false
 
 const audioTypes = {
   mp3: 'audio/mpeg',
@@ -87,13 +89,14 @@ function handleTrackEnd() {
 
 export function play(url, autoplay, format) {
   if (currentMusic.value) {
+    stopProgress()
     currentMusic.value.unload()
-    Howler.unload()
   }
   if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
   currentAudioUrl = url
 
-  currentMusic.value = new Howl({
+  playPending = autoplay
+  currentMusic.value = markRaw(new Howl({
     src: [url],
     format: [format],
     autoplay,
@@ -103,35 +106,39 @@ export function play(url, autoplay, format) {
     volume: volume.value,
     onend: handleTrackEnd,
     onloaderror: (_, error) => {
+      playPending = false
+      playing.value = false
       console.error('[audio load]', error)
       windowApi.reportFrontendError('audio.load', String(error)).catch((reportError) => {
         console.error('[audio error reporter]', reportError)
       })
     },
     onplayerror: (_, error) => {
+      playPending = false
+      playing.value = false
       console.error('[audio play]', error)
       windowApi.reportFrontendError('audio.play', String(error)).catch((reportError) => {
         console.error('[audio error reporter]', reportError)
       })
-      currentMusic.value?.once('unlock', () => currentMusic.value?.play())
     },
-  })
+  }))
 
   currentMusic.value.once('load', () => {
     time.value = Math.floor(currentMusic.value.duration())
   })
   currentMusic.value.on('play', () => {
+    playPending = false
     startProgress()
     playing.value = true
     windowApi.playOrPauseMusicCheck(true)
   })
   currentMusic.value.on('pause', () => {
+    playPending = false
     stopProgress()
     playing.value = false
     windowApi.playOrPauseMusicCheck(false)
   })
   currentMusic.value.on('stop', stopProgress)
-  currentMusic.value.on('unload', stopProgress)
 }
 
 export function updateMediaSession() {
@@ -209,7 +216,10 @@ export function startMusic() {
     nextTrackHandler?.()
     return
   }
-  if (!playing.value) currentMusic.value.play()
+  if (!playing.value && !playPending) {
+    playPending = true
+    currentMusic.value.play()
+  }
   resetLyricAnimation(700)
 }
 
@@ -241,5 +251,6 @@ export function disposePlayback() {
   currentMusic.value?.unload()
   if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
   currentAudioUrl = null
+  playPending = false
   nextTrackHandler = null
 }
