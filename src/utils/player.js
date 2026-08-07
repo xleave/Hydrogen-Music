@@ -509,6 +509,14 @@ windowApi.beforeQuit(() => {
     }
     windowApi.exitApp(JSON.stringify(list))
 })
+// 隐藏到托盘时：只保存播放列表，不退出
+windowApi.beforeTrayHide(() => {
+    let list = {
+        songList: songList.value,
+        shuffledList: shuffledList.value
+    }
+    windowApi.saveLastPlaylist(JSON.stringify(list))
+})
 if ('mediaSession' in navigator) {
     navigator.mediaSession.setActionHandler('previoustrack', () => {
       playLast()

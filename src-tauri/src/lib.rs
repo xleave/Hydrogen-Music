@@ -9,7 +9,11 @@ use lofty::{
 };
 use serde_json::Value;
 use std::path::Path;
-use tauri::AppHandle;
+use tauri::{
+    AppHandle, Emitter, Manager,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 
 #[tauri::command]
 fn scan_local_music(folders: Vec<String>) -> Result<library::ScanResult, String> {
@@ -97,11 +101,78 @@ fn save_last_playlist(app: AppHandle, playlist: String) -> Result<(), String> {
     storage::write_json(&app, "last-playlist.json", &value)
 }
 
+/// 判断当前设置是否为"最小化到托盘"模式
+fn is_minimize_to_tray(app: &AppHandle) -> bool {
+    storage::read_json(app, "settings.json", storage::default_settings())
+        .ok()
+        .and_then(|v| v.get("other").and_then(|o| o.get("quitApp")).and_then(|q| q.as_str()).map(|s| s == "minimize"))
+        .unwrap_or(true) // 默认最小化到托盘
+}
+
+/// 显示主窗口（从托盘恢复）
+fn show_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// 真正退出应用（保存播放列表后退出）
+#[tauri::command]
+async fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // 创建托盘右键菜单
+            let show_item = MenuItem::with_id(app, "show", "显示 Hydrogen Music", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            // 创建托盘图标
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("Hydrogen Music")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // 双击或单击托盘图标 → 显示窗口
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 拦截窗口关闭请求
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                if is_minimize_to_tray(app) {
+                    // 最小化到托盘：隐藏窗口，阻止真正关闭
+                    api.prevent_close();
+                    let _ = window.hide();
+                    // 通知前端保存播放列表
+                    let _ = window.emit("tray-hide", ());
+                }
+                // 否则正常关闭（直接退出）
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             scan_local_music,
             read_cover,
@@ -110,6 +181,7 @@ pub fn run() {
             set_settings,
             get_last_playlist,
             save_last_playlist,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Hydrogen Music");
