@@ -1,5 +1,4 @@
 import { Howl, Howler } from 'howler'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { playerRefs } from './state'
 import {
   loadLocalLyrics,
@@ -26,6 +25,22 @@ let progressFrame = null
 let lastProgressUpdate = 0
 let sequentialPlaybackEnded = false
 let nextTrackHandler = null
+let audioRequestId = 0
+let currentAudioUrl = null
+
+const audioTypes = {
+  mp3: 'audio/mpeg',
+  flac: 'audio/flac',
+  wav: 'audio/wav',
+  aac: 'audio/aac',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  opus: 'audio/ogg',
+}
+
+function audioFormat(filePath) {
+  return filePath.split('.').pop()?.toLowerCase() || 'mp3'
+}
 
 export function registerNextTrackHandler(handler) {
   nextTrackHandler = handler
@@ -70,14 +85,17 @@ function handleTrackEnd() {
   nextTrackHandler?.()
 }
 
-export function play(url, autoplay) {
+export function play(url, autoplay, format) {
   if (currentMusic.value) {
     currentMusic.value.unload()
     Howler.unload()
   }
+  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
+  currentAudioUrl = url
 
   currentMusic.value = new Howl({
     src: [url],
+    format: [format],
     autoplay,
     html5: true,
     preload: true,
@@ -132,17 +150,22 @@ export function updateMediaSession() {
 export async function getSongUrl(index, autoplay) {
   const track = songList.value?.[index]
   if (!track) return
+  const requestId = ++audioRequestId
 
-  windowApi.setWindowTile(`${track.name} - ${track.ar?.[0]?.name || '其他'}`)
-  play(convertFileSrc(track.url), autoplay)
+  windowApi.getLocalMusicImage(track.url).then((cover) => {
+    if (requestId !== audioRequestId) return
+    localBase64Img.value = cover
+    updateMediaSession()
+  })
+  loadLocalLyrics(track.url).then(() => {
+    if (requestId === audioRequestId) revealLyrics()
+  })
 
-  const [cover] = await Promise.all([
-    windowApi.getLocalMusicImage(track.url),
-    loadLocalLyrics(track.url),
-  ])
-  localBase64Img.value = cover
-  updateMediaSession()
-  revealLyrics()
+  const audioData = await windowApi.getLocalMusicAudio(track.url)
+  if (requestId !== audioRequestId) return
+  const format = audioFormat(track.url)
+  const blob = new Blob([audioData], { type: audioTypes[format] || 'application/octet-stream' })
+  play(URL.createObjectURL(blob), autoplay, format)
 }
 
 export function addSong(id, index, autoplay = false) {
@@ -216,5 +239,7 @@ export function changeProgressByDragEnd(toTime) {
 export function disposePlayback() {
   stopProgress()
   currentMusic.value?.unload()
+  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
+  currentAudioUrl = null
   nextTrackHandler = null
 }

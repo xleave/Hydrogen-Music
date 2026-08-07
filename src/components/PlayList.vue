@@ -27,7 +27,6 @@
         widgetState.value = true;
         lyricShow.value = false
       }
-      windowApi.setWindowTile('Hydrogen Music')
       savePlaylist()
       clearTimeout(clearMusic)
     }, 300);

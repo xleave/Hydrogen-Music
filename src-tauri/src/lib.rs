@@ -11,10 +11,11 @@ use serde_json::Value;
 use std::{
     fs::OpenOptions,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     sync::RwLock,
 };
 use tauri::{
+    ipc::Response,
     AppHandle, Emitter, Manager, State,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -84,6 +85,33 @@ fn read_lyrics(file_path: String) -> Result<Option<String>, String> {
     std::fs::read_to_string(lrc_path)
         .map(Some)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn read_audio_file(app: AppHandle, file_path: String) -> Result<Response, String> {
+    let path = authorized_audio_path(&app.state::<SettingsState>(), &file_path)?;
+    std::fs::read(path)
+        .map(Response::new)
+        .map_err(|error| error.to_string())
+}
+
+fn authorized_audio_path(settings: &SettingsState, file_path: &str) -> Result<PathBuf, String> {
+    let audio_path = std::fs::canonicalize(file_path).map_err(|error| error.to_string())?;
+    let settings = settings.0.read().map_err(|error| error.to_string())?;
+    let folders = settings
+        .get("local")
+        .and_then(|local| local.get("localFolder"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "local music folders are not configured".to_string())?;
+    let authorized = folders
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(|folder| std::fs::canonicalize(folder).ok())
+        .any(|folder| audio_path.starts_with(folder));
+    if !authorized {
+        return Err("audio file is outside the configured music folders".to_string());
+    }
+    Ok(audio_path)
 }
 
 #[tauri::command]
@@ -236,6 +264,7 @@ pub fn run() {
             scan_local_music,
             read_cover,
             read_lyrics,
+            read_audio_file,
             get_settings,
             set_settings,
             get_last_playlist,
