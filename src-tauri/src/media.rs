@@ -61,6 +61,7 @@ mod platform {
             artist: &str,
             album: &str,
             duration: f64,
+            cover_url: Option<&str>,
         ) -> Result<(), String> {
             self.with_controls(|controls| {
                 controls
@@ -68,7 +69,7 @@ mod platform {
                         title: Some(title),
                         artist: Some(artist),
                         album: Some(album),
-                        cover_url: None,
+                        cover_url,
                         duration: Some(Duration::from_secs_f64(duration.max(0.0))),
                     })
                     .map_err(|error| error.to_string())
@@ -180,6 +181,7 @@ mod platform {
             _artist: &str,
             _album: &str,
             _duration: f64,
+            _cover_url: Option<&str>,
         ) -> Result<(), String> {
             Ok(())
         }
