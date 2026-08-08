@@ -9,8 +9,39 @@ on:
   workflow_dispatch:
 
 jobs:
+  verify:
+    name: Verify release commit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Tauri system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev patchelf
+      - run: npm ci --no-fund
+      - name: Audit runtime npm dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Build frontend
+        run: npm run build
+      - name: Check Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit Rust dependencies
+        run: cargo audit --file src-tauri/Cargo.lock
+
   fedora-rpm:
     name: Fedora 42 RPM release
+    needs: verify
     runs-on: ubuntu-24.04
     container: fedora:42
     permissions:
