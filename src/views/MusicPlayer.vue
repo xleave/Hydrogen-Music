@@ -34,7 +34,11 @@
 <template>
   <div ref="playerRoot" class="music-player">
     <Transition name="fade3">
-      <div class="back-drop" :style="{'backgroundImage': 'url(' + playerStore.coverUrl + ')'}" v-if="playerStore.coverBlur"></div>
+      <div
+        class="back-drop"
+        :style="{'backgroundImage': 'url(' + (playerStore.coverBackdropUrl || playerStore.coverUrl) + ')'}"
+        v-if="playerStore.coverBlur && (playerStore.coverBackdropUrl || playerStore.coverUrl)"
+      ></div>
     </Transition>
     <Player class="player-container" :class="{'cover-blur': playerStore.coverBlur}"></Player>
     <Lyric class="lyric-container"></Lyric>
@@ -71,9 +75,9 @@
       width: 120%;
       height: 120%;
       background-size: contain;
-      filter: blur(50px);
-      transform: translate(-10%, -10%); //开启GPU硬件加速
-      transition: 0.3s;
+      filter: none;
+      transform: translate3d(-10%, -10%, 0);
+      transition: opacity 0.3s;
     }
     .back-drop::before{
       content: "";
