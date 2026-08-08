@@ -7,6 +7,7 @@ export {
   play,
   startMusic,
   startProgress,
+  stopMusic,
   stopProgress,
   updateMediaSession,
 } from './player/playback'
