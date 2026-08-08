@@ -16,7 +16,7 @@
 </script>
 
 <template>
-  <div class="my-music" :class="{'my-music-full': !playerStore.songList}">
+  <div class="my-music" :class="{'my-music-full': !playerStore.hasPlaylist}">
     <div class="music-library">
       <LibraryType class="library-type"></LibraryType>
       <LocalMusicList :folderlist="localDirectoryTree" :classifylist="localMusicClassify" type="local" v-if="localDirectoryTree" class="local-list"></LocalMusicList>
