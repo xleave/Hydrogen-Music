@@ -67,15 +67,21 @@ pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), Stri
     if cfg!(windows) && path.exists() {
         fs::remove_file(&path).map_err(|error| error.to_string())?;
     }
-    fs::rename(tmp, path).map_err(|error| error.to_string())
+    fs::rename(&tmp, &path).map_err(|error| error.to_string())?;
+    if let Some(parent) = path.parent() {
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+    }
+    Ok(())
 }
 
 pub fn default_settings() -> Value {
     json!({
         "music": {
-            "lyricSize": "20",
-            "tlyricSize": "14",
-            "rlyricSize": "12",
+            "lyricSize": 20,
+            "tlyricSize": 14,
+            "rlyricSize": 12,
             "lyricInterlude": 13
         },
         "local": {

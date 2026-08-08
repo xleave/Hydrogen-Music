@@ -8,6 +8,7 @@ let lastProgressUpdate = 0
 let statusPending = false
 let sequentialPlaybackEnded = false
 let nextTrackHandler = null
+let playbackCheckpointHandler = null
 let audioRequestId = 0
 let playPending = false
 
@@ -15,6 +16,15 @@ function reportAudioError(source, error) {
   const detail = error instanceof Error ? error.message : String(error)
   console.error(`[${source}]`, error)
   windowApi.reportFrontendError(source, detail).catch((reportError) => console.error('[audio error reporter]', reportError))
+}
+
+function checkpointPlayback() {
+  try {
+    const result = playbackCheckpointHandler?.()
+    result?.catch?.((error) => console.error('[playback checkpoint]', error))
+  } catch (error) {
+    console.error('[playback checkpoint]', error)
+  }
 }
 
 class NativeMusic {
@@ -26,7 +36,11 @@ class NativeMusic {
     if (position === undefined) return this.position
     this.position = position
     this.endHandled = false
-    windowApi.audioSeek(position).then((status) => { this.applyStatus(status); windowApi.playOrPauseMusicCheck(status.playing) }).catch((error) => reportAudioError('audio.seek', error))
+    windowApi.audioSeek(position).then((status) => {
+      this.applyStatus(status)
+      windowApi.playOrPauseMusicCheck(status.playing)
+      checkpointPlayback()
+    }).catch((error) => reportAudioError('audio.seek', error))
     return position
   }
   duration() { return this.trackDuration }
@@ -44,6 +58,7 @@ class NativeMusic {
 }
 
 export function registerNextTrackHandler(handler) { nextTrackHandler = handler }
+export function registerPlaybackCheckpointHandler(handler) { playbackCheckpointHandler = handler }
 function currentTrack() { return songList.value?.[currentIndex.value] ?? null }
 
 export function stopProgress() { if (progressFrame !== null) cancelAnimationFrame(progressFrame); progressFrame = null; lastProgressUpdate = 0 }
@@ -71,6 +86,7 @@ function handleTrackEnd() {
     playing.value = false
     sequentialPlaybackEnded = true
     windowApi.playOrPauseMusicCheck(false)
+    checkpointPlayback()
     return
   }
   if (playMode.value === 2) { progress.value = 0; resetLyricAnimation(); getSongUrl(currentIndex.value, true); return }
@@ -155,6 +171,7 @@ export function startMusic() {
       playing.value = status.playing
       windowApi.playOrPauseMusicCheck(status.playing)
       if (status.playing) startProgress()
+      checkpointPlayback()
     }).catch((error) => { playPending = false; reportAudioError('audio.play', error) })
   }
   resetLyricAnimation(700)
@@ -166,10 +183,10 @@ export function pauseMusic() {
   const music = currentMusic.value
   playing.value = false
   windowApi.playOrPauseMusicCheck(false)
-  music.pause().catch((error) => reportAudioError('audio.pause', error))
+  music.pause().then(() => checkpointPlayback()).catch((error) => reportAudioError('audio.pause', error))
 }
 
 export function changeProgress(toTime) { if (!currentMusic.value) return; resetLyricAnimation(); currentMusic.value.seek(toTime); progress.value = toTime }
 export function changeProgressByDragStart() { stopProgress() }
 export function changeProgressByDragEnd(toTime) { changeProgress(toTime); if (playing.value) startProgress() }
-export function disposePlayback() { stopProgress(); currentMusic.value?.unload(); playPending = false; nextTrackHandler = null }
+export function disposePlayback() { stopProgress(); currentMusic.value?.unload(); playPending = false; nextTrackHandler = null; playbackCheckpointHandler = null }

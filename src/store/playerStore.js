@@ -40,6 +40,8 @@ export const usePlayerStore = defineStore('playerStore', {
     },
     persist: {
         storage: localStorage,
-        paths: ['progress','volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','lyricType','coverBlur','lyricBlur']
+        // 播放队列、歌曲、进度、音量和播放模式统一由 last-playlist.json 持久化，
+        // 避免与 localStorage 形成两套 source of truth，并避免高频 progress 同步写入。
+        paths: ['lyricType','coverBlur','lyricBlur']
     },
 })

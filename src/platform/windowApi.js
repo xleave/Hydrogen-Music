@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
-import { open } from '@tauri-apps/plugin-dialog'
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 const callbacks = new Map()
+let scanRequestId = 0
+let exiting = false
 
 function subscribe(name, callback) {
   if (!callbacks.has(name)) callbacks.set(name, new Set())
@@ -13,13 +13,40 @@ function subscribe(name, callback) {
 }
 
 function emit(name, ...args) {
-  for (const callback of callbacks.get(name) || []) callback({}, ...args)
+  const results = []
+  for (const callback of callbacks.get(name) || []) results.push(callback({}, ...args))
+  return results
 }
 
-async function scanLocalMusic(params) {
-  const result = await invoke('scan_local_music')
-  emit('localMusicCount', result.count)
-  emit('localMusicFiles', { ...result, type: params.type })
+async function runExitFlush(playlist) {
+  if (exiting) return
+  exiting = true
+  try {
+    if (playlist !== undefined) await invoke('save_last_playlist', { playlist })
+    const pending = emit('beforeQuit')
+    await Promise.allSettled(pending.map((value) => Promise.resolve(value)))
+    if (document.querySelector('.settings-page')) {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    }
+    await invoke('quit_app')
+  } catch (error) {
+    exiting = false
+    throw error
+  }
+}
+
+async function scanLocalMusic(params = {}) {
+  const requestId = ++scanRequestId
+  try {
+    const result = await invoke('scan_local_music', { requestId })
+    if (requestId !== scanRequestId) return null
+    emit('localMusicCount', result.count)
+    emit('localMusicFiles', { ...result, type: params.type })
+    return result
+  } catch (error) {
+    if (requestId !== scanRequestId || String(error).includes('stale music scan')) return null
+    throw error
+  }
 }
 
 const noop = () => {}
@@ -28,19 +55,18 @@ export function installWindowApi() {
   const appWindow = getCurrentWindow()
   const trayListener = listen('tray-hide', () => emit('beforeTrayHide'))
   const mediaListener = listen('media-control', (event) => emit('systemMediaControl', event.payload))
-  const exitListener = listen('app-exit-requested', () => emit('beforeQuit'))
+  const exitListener = listen('app-exit-requested', () => {
+    runExitFlush().catch((error) => console.error('[exit flush]', error))
+  })
 
   window.windowApi = {
     windowMin: () => appWindow.minimize(),
     windowMax: async () => (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize(),
     windowClose: () => appWindow.close(),
-    toRegister: (url) => openUrl(url),
+    toRegister: () => invoke('open_project_page'),
     beforeQuit: (callback) => subscribe('beforeQuit', callback),
     beforeTrayHide: (callback) => subscribe('beforeTrayHide', callback),
-    exitApp: async (playlist) => {
-      if (playlist !== undefined) await invoke('save_last_playlist', { playlist })
-      await invoke('quit_app')
-    },
+    exitApp: (playlist) => runExitFlush(playlist),
     scanLocalMusic,
     localMusicFiles: (callback) => subscribe('localMusicFiles', callback),
     localMusicCount: (callback) => subscribe('localMusicCount', callback),
@@ -60,8 +86,7 @@ export function installWindowApi() {
     getSettings: () => invoke('get_settings'),
     listSystemFonts: () => invoke('list_system_fonts'),
     openFile: () => invoke('select_local_folder'),
-    selectFile: () => open({ directory: false, multiple: false }),
-    openLocalFolder: (path) => revealItemInDir(path),
+    openLocalFolder: (filePath) => invoke('reveal_music_file', { filePath }),
     saveLastPlaylist: (playlist) => invoke('save_last_playlist', { playlist }),
     getLastPlaylist: () => invoke('get_last_playlist'),
     reportFrontendError: (source, detail) => invoke('report_frontend_error', { source, detail }),

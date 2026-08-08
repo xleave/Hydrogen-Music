@@ -1,5 +1,5 @@
 import { playerRefs, otherStore } from './state'
-import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, startMusic, stopProgress } from './playback'
+import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, registerPlaybackCheckpointHandler, startMusic, stopProgress } from './playback'
 import { applyPlayMode, playLast, playNext, savePlaylist } from './playlist'
 
 const { currentMusic, playMode, playing, playlistWidgetShow, progress, volume } = playerRefs
@@ -21,14 +21,19 @@ function handleSystemMediaControl(command) {
     case 'volume':
       volume.value = Math.max(0, Math.min(1, command.value))
       currentMusic.value?.volume(volume.value)
+      savePlaylist().catch((error) => console.error('[playlist checkpoint after volume]', error))
       break
   }
 }
 
 export function initializePlayerLifecycle() {
   cleanup?.()
+  registerPlaybackCheckpointHandler(savePlaylist)
   const disposers = []
   let draggingProgress = false
+  const checkpointTimer = setInterval(() => {
+    savePlaylist().catch((error) => console.error('[playlist checkpoint]', error))
+  }, 10_000)
 
   const onMouseDown = (event) => {
     if (event.target instanceof Element && event.target.closest('#widget-progress')) {
@@ -40,6 +45,7 @@ export function initializePlayerLifecycle() {
     if (!draggingProgress) return
     changeProgressByDragEnd(progress.value)
     draggingProgress = false
+    savePlaylist().catch((error) => console.error('[playlist checkpoint after seek]', error))
   }
   const onClick = (event) => {
     if (playlistWidgetShow.value) {
@@ -60,21 +66,26 @@ export function initializePlayerLifecycle() {
     windowApi.lastOrNextMusic((event, option) => (option === 'last' ? playLast() : playNext())),
     windowApi.changeMusicPlaymode((event, mode) => applyPlayMode(mode)),
     windowApi.systemMediaControl((event, command) => handleSystemMediaControl(command)),
-    windowApi.volumeUp(() => { volume.value = Math.min(1, volume.value + 0.1); currentMusic.value?.volume(volume.value) }),
-    windowApi.volumeDown(() => { volume.value = Math.max(0, volume.value - 0.1); currentMusic.value?.volume(volume.value) }),
+    windowApi.volumeUp(() => {
+      volume.value = Math.min(1, volume.value + 0.1)
+      currentMusic.value?.volume(volume.value)
+      savePlaylist().catch((error) => console.error('[playlist checkpoint after volume]', error))
+    }),
+    windowApi.volumeDown(() => {
+      volume.value = Math.max(0, volume.value - 0.1)
+      currentMusic.value?.volume(volume.value)
+      savePlaylist().catch((error) => console.error('[playlist checkpoint after volume]', error))
+    }),
     windowApi.musicProcessControl((event, mode) => {
       if (!currentMusic.value) return
       const delta = mode === 'forward' ? 3 : -3
       const target = Math.max(0, Math.min(currentMusic.value.duration(), progress.value + delta))
       progress.value = target
       currentMusic.value.seek(target)
+      savePlaylist().catch((error) => console.error('[playlist checkpoint after seek]', error))
     }),
-    windowApi.beforeTrayHide(savePlaylist),
-    windowApi.beforeQuit(() => {
-      savePlaylist()
-        .catch((error) => console.error('[playlist save before exit]', error))
-        .finally(() => windowApi.exitApp())
-    }),
+    windowApi.beforeTrayHide(() => savePlaylist()),
+    windowApi.beforeQuit(() => savePlaylist()),
   )
 
   if ('mediaSession' in navigator) {
@@ -88,6 +99,8 @@ export function initializePlayerLifecycle() {
   windowApi.changeTrayMusicPlaymode(playMode.value)
 
   cleanup = () => {
+    clearInterval(checkpointTimer)
+    registerPlaybackCheckpointHandler(null)
     for (const dispose of disposers) dispose?.()
     stopProgress()
     if ('mediaSession' in navigator) {

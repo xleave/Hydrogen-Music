@@ -3,8 +3,9 @@ import MyMusic from '../views/MyMusic.vue'
 import LocalMusicDetail from '../components/LocalMusicDetail.vue'
 import Settings from '../views/Settings.vue'
 import { useLocalStore } from '../store/localStore'
+import pinia from '../store/pinia'
 
-const localStore = useLocalStore()
+const localStore = useLocalStore(pinia)
 
 const routes = [
   {

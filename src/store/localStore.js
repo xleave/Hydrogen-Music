@@ -15,6 +15,7 @@ export const useLocalStore = defineStore('localStore', {
             currentSelectedSongs: null,
             currentSelectedFilePicUrl: null,
             isRefreshLocalFile: false,
+            detailRequestId: 0,
 
             quitApp: null,
         }
@@ -26,10 +27,11 @@ export const useLocalStore = defineStore('localStore', {
                 else this.currentSelectedSongs.push(song)
             }
         },
-        getFolderSongs(arr, folderName) {
+        getFolderSongs(arr, folderId) {
             for (const item of arr || []) {
-              if(item.name === folderName) {
+              if(item.id === folderId || item.dirPath === folderId || item.name === folderId) {
                 this.currentSelectedInfo = {
+                    id: item.id || item.dirPath,
                     name: item.name,
                     dirPath: item.dirPath
                 }
@@ -37,7 +39,7 @@ export const useLocalStore = defineStore('localStore', {
                 this.getSongs(item.children)
                 return true
               }
-              if(item.children && this.getFolderSongs(item.children, folderName)) return true
+              if(item.children && this.getFolderSongs(item.children, folderId)) return true
             }
             return false
         },
@@ -45,11 +47,12 @@ export const useLocalStore = defineStore('localStore', {
             return await windowApi.getLocalMusicImage(fileUrl)
         },
         updateLocalMusicDetail(type, query, id) {
+            const requestId = ++this.detailRequestId
             this.currentType = type
             this.currentSelectedFilePicUrl = null
             if(type === 'localFiles') {
-                if(query.type === 'local')
-                    this.getFolderSongs(this.localMusicList, query.name)
+                if(query?.type === 'local')
+                    this.getFolderSongs(this.localMusicList, query.id || query.name)
             }
             if(type === 'localAlbum') {
                 const index = (this.localMusicClassify?.albums || []).findIndex((item) => item.id === id)
@@ -57,13 +60,14 @@ export const useLocalStore = defineStore('localStore', {
                 const album = this.localMusicClassify.albums[index]
                 this.currentSelectedInfo = {
                     id: album.id,
-                    name: album.name
+                    name: album.name,
+                    albumArtist: album.albumArtist,
                 }
                 this.currentSelectedSongs = album.songs
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
-                        this.currentSelectedFilePicUrl = res
-                    })
+                        if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
+                    }).catch((error) => console.error('[local cover]', error))
             }
             if(type === 'localArtist') {
                 const index = (this.localMusicClassify?.artists || []).findIndex((item) => item.id === id)
@@ -76,8 +80,8 @@ export const useLocalStore = defineStore('localStore', {
                 this.currentSelectedSongs = artist.songs
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
-                        this.currentSelectedFilePicUrl = res
-                    })
+                        if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
+                    }).catch((error) => console.error('[local cover]', error))
             }
             return true
         }

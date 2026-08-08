@@ -34,8 +34,8 @@ async function bootstrap() {
   app.config.errorHandler = (error, instance, info) => {
     reportFrontendError(error, `Vue: ${info}`)
   }
-  app.use(router)
   app.use(pinia)
+  app.use(router)
   app.directive('lazy', lazy)
   app.mount('#app')
   disposePlayerLifecycle = initializePlayerLifecycle()

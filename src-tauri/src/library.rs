@@ -8,13 +8,19 @@ use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
+pub const STALE_SCAN: &str = "stale music scan";
 const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "wav", "aac", "m4a", "ogg", "opus", "wma", "ape", "alac", "aiff",
     "mp2", "mpc", "wv", "speex",
 ];
 const MAX_SCAN_DEPTH: usize = 128;
+const MAX_TRACKS: usize = 100_000;
+const MAX_METADATA_CHARS: usize = 4096;
+const MAX_ARTISTS: usize = 32;
+const MAX_GENRES: usize = 32;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +28,7 @@ pub struct ScanResult {
     dir_tree: Vec<Node>,
     loca_files_metadata: Vec<Node>,
     count: usize,
+    truncated: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -54,7 +61,6 @@ struct CommonMetadata {
     genre: Vec<String>,
     year: Option<u32>,
     has_lyrics: bool,
-    /// 文件最后修改时间（Unix 毫秒时间戳），用于排序
     modified_at: Option<u64>,
 }
 
@@ -68,20 +74,47 @@ struct FormatMetadata {
     sample_rate: Option<u32>,
 }
 
-pub fn scan(folders: &[PathBuf]) -> Result<ScanResult, String> {
-    let results: Result<Vec<(Node, usize)>, String> = folders
+pub fn scan(
+    folders: &[PathBuf],
+    request_id: u64,
+    latest_request_id: &AtomicU64,
+) -> Result<ScanResult, String> {
+    ensure_current(request_id, latest_request_id)?;
+    let total_tracks = AtomicUsize::new(0);
+    let roots: Result<Vec<Option<(Node, usize)>>, String> = folders
         .par_iter()
         .map(|folder| {
-            let root = fs::canonicalize(folder)
-                .map_err(|error| format!("无法解析 {}: {error}", folder.display()))?;
+            ensure_current(request_id, latest_request_id)?;
+            let root = match fs::canonicalize(folder) {
+                Ok(root) => root,
+                Err(error) => {
+                    eprintln!("[library scan] 无法解析 {}: {error}", folder.display());
+                    return Ok(None);
+                }
+            };
             if !root.is_dir() {
-                return Err(format!("{} 不是目录", root.display()));
+                eprintln!("[library scan] {} 不是目录", root.display());
+                return Ok(None);
             }
-            scan_directory(&root, 0)
+            match scan_directory(
+                &root,
+                0,
+                request_id,
+                latest_request_id,
+                &total_tracks,
+            ) {
+                Ok(result) => Ok(Some(result)),
+                Err(error) if error == STALE_SCAN => Err(error),
+                Err(error) => {
+                    eprintln!("[library scan] {error}");
+                    Ok(None)
+                }
+            }
         })
         .collect();
 
-    let results = results?;
+    ensure_current(request_id, latest_request_id)?;
+    let results: Vec<(Node, usize)> = roots?.into_iter().flatten().collect();
     let count = results.iter().map(|(_, c)| c).sum();
     let metadata_roots: Vec<Node> = results.into_iter().map(|(n, _)| n).collect();
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
@@ -90,55 +123,97 @@ pub fn scan(folders: &[PathBuf]) -> Result<ScanResult, String> {
         dir_tree,
         loca_files_metadata: metadata_roots,
         count,
+        truncated: total_tracks.load(Ordering::Relaxed) >= MAX_TRACKS,
     })
 }
 
-/// 扫描单个目录，返回 (Node, 文件数量)。
-/// 不跟随符号链接，避免扫描越过用户选择的目录或进入链接环。
-fn scan_directory(path: &Path, depth: usize) -> Result<(Node, usize), String> {
+fn ensure_current(request_id: u64, latest_request_id: &AtomicU64) -> Result<(), String> {
+    if latest_request_id.load(Ordering::Acquire) != request_id {
+        Err(STALE_SCAN.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn scan_directory(
+    path: &Path,
+    depth: usize,
+    request_id: u64,
+    latest_request_id: &AtomicU64,
+    total_tracks: &AtomicUsize,
+) -> Result<(Node, usize), String> {
+    ensure_current(request_id, latest_request_id)?;
     if depth > MAX_SCAN_DEPTH {
         return Err(format!("目录层级过深: {}", path.display()));
     }
 
-    let mut entries = fs::read_dir(path)
-        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
+    let read_dir = fs::read_dir(path)
+        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
+    let mut entries = Vec::new();
+    for entry in read_dir {
+        ensure_current(request_id, latest_request_id)?;
+        if let Ok(entry) = entry {
+            entries.push(entry);
+        }
+    }
     entries.sort_unstable_by(|a, b| a.file_name().cmp(&b.file_name()));
 
     let mut sub_dirs = Vec::new();
     let mut audio_paths = Vec::new();
     for entry in entries {
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("无法读取 {} 的文件类型: {error}", entry.path().display()))?;
+        ensure_current(request_id, latest_request_id)?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if file_type.is_symlink() {
             continue;
         }
 
-        let path = entry.path();
+        let entry_path = entry.path();
         if file_type.is_dir() {
-            sub_dirs.push(path);
-        } else if file_type.is_file() && is_audio_file(&path) {
-            audio_paths.push(path);
+            sub_dirs.push(entry_path);
+        } else if file_type.is_file() && is_audio_file(&entry_path) {
+            if total_tracks.fetch_add(1, Ordering::Relaxed) >= MAX_TRACKS {
+                total_tracks.fetch_sub(1, Ordering::Relaxed);
+                break;
+            }
+            audio_paths.push(entry_path);
         }
     }
 
     let mut children: Vec<Node> = Vec::with_capacity(sub_dirs.len() + audio_paths.len());
     let mut count = 0usize;
     for sub in sub_dirs {
-        let (node, child_count) = scan_directory(&sub, depth + 1)?;
-        count += child_count;
-        children.push(node);
+        ensure_current(request_id, latest_request_id)?;
+        match scan_directory(
+            &sub,
+            depth + 1,
+            request_id,
+            latest_request_id,
+            total_tracks,
+        ) {
+            Ok((node, child_count)) => {
+                count += child_count;
+                children.push(node);
+            }
+            Err(error) if error == STALE_SCAN => return Err(error),
+            Err(error) => eprintln!("[library scan] {error}"),
+        }
     }
 
+    ensure_current(request_id, latest_request_id)?;
     let file_count = audio_paths.len();
     let file_nodes: Vec<Node> = audio_paths
         .par_iter()
-        .map(|path| read_track(path).unwrap_or_else(|_| fallback_track(path)))
+        .filter_map(|audio_path| {
+            if latest_request_id.load(Ordering::Acquire) != request_id {
+                return None;
+            }
+            Some(read_track(audio_path).unwrap_or_else(|_| fallback_track(audio_path)))
+        })
         .collect();
 
+    ensure_current(request_id, latest_request_id)?;
     count += file_count;
     children.extend(file_nodes);
 
@@ -147,14 +222,15 @@ fn scan_directory(path: &Path, depth: usize) -> Result<(Node, usize), String> {
         .unwrap_or(path.as_os_str())
         .to_string_lossy()
         .into_owned();
+    let path_string = path.to_string_lossy().into_owned();
 
     Ok((
         Node {
             name,
-            dir_path: path.to_string_lossy().into_owned(),
+            dir_path: path_string.clone(),
             node_type: "folder".into(),
             children: Some(children),
-            id: None,
+            id: Some(path_string),
             common: None,
             format: None,
         },
@@ -169,30 +245,36 @@ fn is_audio_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn bounded_text(value: &str) -> String {
+    value.chars().take(MAX_METADATA_CHARS).collect()
+}
+
 fn read_track(path: &Path) -> Result<Node, String> {
     let tagged = read_from_path(path)
         .map_err(|e| format!("无法解析 {}: {e}", path.display()))?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
-    let local_title = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
+    let local_title = bounded_text(
+        &path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy(),
+    );
 
     let title = tag
         .and_then(Accessor::title)
-        .map(|v| v.into_owned())
+        .map(|v| bounded_text(&v))
         .unwrap_or_else(|| local_title.clone());
 
     let artists = tag
         .and_then(Accessor::artist)
         .map(|v| split_artists(&v))
+        .filter(|artists| !artists.is_empty())
         .unwrap_or_else(|| vec!["其他".into()]);
 
     let album = tag
         .and_then(Accessor::album)
-        .map(|v| v.into_owned())
+        .map(|v| bounded_text(&v))
         .unwrap_or_else(|| "其他".into());
 
     let properties = tagged.properties();
@@ -208,11 +290,27 @@ fn read_track(path: &Path) -> Result<Node, String> {
         t.get_string(ItemKey::Lyrics).is_some() || t.get_string(ItemKey::UnsyncLyrics).is_some()
     }) || path.with_extension("lrc").is_file();
 
-    let date = tag.and_then(Accessor::date).map(|v| v.to_string());
+    let date = tag.and_then(Accessor::date).map(|v| bounded_text(&v.to_string()));
     let year = date
         .as_deref()
         .and_then(|v| v.get(..4))
         .and_then(|v| v.parse().ok());
+
+    let albumartist = tag
+        .and_then(|t| t.get_string(ItemKey::AlbumArtist))
+        .map(bounded_text);
+    let genre = tag
+        .and_then(Accessor::genre)
+        .map(|value| {
+            value
+                .split([',', ';'])
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .take(MAX_GENRES)
+                .map(bounded_text)
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(Node {
         name: path
@@ -230,17 +328,12 @@ fn read_track(path: &Path) -> Result<Node, String> {
             title,
             artists,
             album,
-            albumartist: tag
-                .and_then(|t| t.get_string(ItemKey::AlbumArtist))
-                .map(str::to_owned),
+            albumartist,
             date,
-            genre: tag
-                .and_then(Accessor::genre)
-                .map(|v| vec![v.into_owned()])
-                .unwrap_or_default(),
+            genre,
             year,
             has_lyrics,
-            modified_at: std::fs::metadata(path)
+            modified_at: fs::metadata(path)
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -257,11 +350,12 @@ fn read_track(path: &Path) -> Result<Node, String> {
 }
 
 fn fallback_track(path: &Path) -> Node {
-    let local_title = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
+    let local_title = bounded_text(
+        &path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy(),
+    );
     let file_path = path.to_string_lossy().into_owned();
     let container = path
         .extension()
@@ -289,7 +383,7 @@ fn fallback_track(path: &Path) -> Node {
             genre: Vec::new(),
             year: None,
             has_lyrics: path.with_extension("lrc").is_file(),
-            modified_at: std::fs::metadata(path)
+            modified_at: fs::metadata(path)
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -311,7 +405,8 @@ fn split_artists(value: &str) -> Vec<String> {
         .flat_map(|part| part.split(" / "))
         .map(str::trim)
         .filter(|artist| !artist.is_empty())
-        .map(str::to_owned)
+        .take(MAX_ARTISTS)
+        .map(bounded_text)
         .collect()
 }
 
@@ -328,8 +423,25 @@ fn directory_only(node: &Node) -> Node {
         dir_path: node.dir_path.clone(),
         node_type: node.node_type.clone(),
         children,
-        id: None,
+        id: node.id.clone(),
         common: None,
         format: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artist_split_does_not_break_slashes_inside_names() {
+        assert_eq!(split_artists("AC/DC"), vec!["AC/DC"]);
+        assert_eq!(split_artists("A / B; C"), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn metadata_is_bounded() {
+        let long = "x".repeat(MAX_METADATA_CHARS + 100);
+        assert_eq!(bounded_text(&long).chars().count(), MAX_METADATA_CHARS);
     }
 }
