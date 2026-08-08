@@ -1,3 +1,80 @@
+use std::sync::Mutex;
+use tauri::AppHandle;
+
+#[derive(Default)]
+struct MetadataGeneration(Mutex<u64>);
+
+impl MetadataGeneration {
+    fn reserve(&self) -> Result<u64, String> {
+        let mut current = self.0.lock().map_err(|error| error.to_string())?;
+        *current += 1;
+        Ok(*current)
+    }
+
+    fn apply_if_current(
+        &self,
+        generation: u64,
+        operation: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let current = self.0.lock().map_err(|error| error.to_string())?;
+        if *current != generation {
+            return Ok(false);
+        }
+        operation()?;
+        Ok(true)
+    }
+}
+
+pub struct MediaState {
+    platform: platform::PlatformMediaState,
+    metadata_generation: MetadataGeneration,
+}
+
+impl MediaState {
+    pub fn new(app: &AppHandle) -> Self {
+        Self {
+            platform: platform::PlatformMediaState::new(app),
+            metadata_generation: MetadataGeneration::default(),
+        }
+    }
+
+    pub fn reserve_metadata(&self) -> Result<u64, String> {
+        self.metadata_generation.reserve()
+    }
+
+    pub fn set_metadata_if_current(
+        &self,
+        generation: u64,
+        title: &str,
+        artist: &str,
+        album: &str,
+        duration: f64,
+        cover_url: Option<&str>,
+    ) -> Result<bool, String> {
+        self.metadata_generation.apply_if_current(generation, || {
+            self.platform
+                .set_metadata(title, artist, album, duration, cover_url)
+        })
+    }
+
+    pub fn set_playback(&self, playing: bool, position: f64) -> Result<(), String> {
+        self.platform.set_playback(playing, position)
+    }
+
+    pub fn set_stopped(&self) -> Result<(), String> {
+        self.platform.set_stopped()
+    }
+
+    pub fn clear(&self) -> Result<(), String> {
+        self.metadata_generation.reserve()?;
+        self.platform.clear()
+    }
+
+    pub fn set_volume(&self, volume: f64) -> Result<(), String> {
+        self.platform.set_volume(volume)
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use serde::Serialize;
@@ -8,7 +85,7 @@ mod platform {
     use std::{sync::Mutex, time::Duration};
     use tauri::{AppHandle, Emitter, Manager};
 
-    pub struct MediaState(Mutex<Option<MediaControls>>);
+    pub struct PlatformMediaState(Mutex<Option<MediaControls>>);
 
     #[derive(Clone, Serialize)]
     struct MediaCommand {
@@ -16,7 +93,7 @@ mod platform {
         value: Option<f64>,
     }
 
-    impl MediaState {
+    impl PlatformMediaState {
         pub fn new(app: &AppHandle) -> Self {
             let config = PlatformConfig {
                 dbus_name: "hydrogen_music",
@@ -171,9 +248,9 @@ mod platform {
 mod platform {
     use tauri::AppHandle;
 
-    pub struct MediaState;
+    pub struct PlatformMediaState;
 
-    impl MediaState {
+    impl PlatformMediaState {
         pub fn new(_app: &AppHandle) -> Self {
             Self
         }
@@ -202,4 +279,30 @@ mod platform {
     }
 }
 
-pub use platform::MediaState;
+#[cfg(test)]
+mod tests {
+    use super::MetadataGeneration;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn only_the_latest_metadata_request_can_apply() {
+        let generations = MetadataGeneration::default();
+        let first = generations.reserve().unwrap();
+        let second = generations.reserve().unwrap();
+        let applied = AtomicU64::new(0);
+
+        assert!(!generations
+            .apply_if_current(first, || {
+                applied.store(first, Ordering::Relaxed);
+                Ok(())
+            })
+            .unwrap());
+        assert!(generations
+            .apply_if_current(second, || {
+                applied.store(second, Ordering::Relaxed);
+                Ok(())
+            })
+            .unwrap());
+        assert_eq!(applied.load(Ordering::Relaxed), second);
+    }
+}
