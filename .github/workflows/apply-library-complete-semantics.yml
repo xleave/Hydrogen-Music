@@ -1,0 +1,71 @@
+name: Apply complete library scan semantics
+
+on:
+  push:
+    branches: ["agent/rust-local-player"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Apply guarded Rust patches
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          library = Path('src-tauri/src/library.rs')
+          text = library.read_text()
+
+          old = '''    count: usize,\n    truncated: bool,\n}'''
+          new = '''    count: usize,\n    truncated: bool,\n    complete: bool,\n}'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('ScanResult anchor changed')
+              text = text.replace(old, new, 1)
+
+          old = '''pub fn scan(\n    folders: &[PathBuf],\n    request_id: u64,\n    latest_request_id: &AtomicU64,\n) -> Result<ScanResult, String> {'''
+          new = '''pub fn scan(\n    folders: &[PathBuf],\n    request_id: u64,\n    latest_request_id: &AtomicU64,\n    roots_complete: bool,\n) -> Result<ScanResult, String> {'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('scan signature anchor changed')
+              text = text.replace(old, new, 1)
+
+          old = '''    if let Some(index_path) = index_path.as_deref() {\n        if let Err(error) = persist_index(index_path, &cache, budget.may_prune_cache()) {\n            eprintln!("[library index] failed to persist cache: {error}");\n        }\n    }\n\n    Ok(ScanResult {\n        dir_tree,\n        loca_files_metadata: metadata_roots,\n        count,\n        truncated: budget.truncated.load(Ordering::Acquire),\n    })'''
+          new = '''    let complete = roots_complete && budget.may_prune_cache();\n    if let Some(index_path) = index_path.as_deref() {\n        if let Err(error) = persist_index(index_path, &cache, complete) {\n            eprintln!("[library index] failed to persist cache: {error}");\n        }\n    }\n\n    Ok(ScanResult {\n        dir_tree,\n        loca_files_metadata: metadata_roots,\n        count,\n        truncated: budget.truncated.load(Ordering::Acquire),\n        complete,\n    })'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('scan result anchor changed')
+              text = text.replace(old, new, 1)
+          library.write_text(text)
+
+          lib = Path('src-tauri/src/lib.rs')
+          text = lib.read_text()
+          old = '''    let folders = configured_music_folders(&settings)?;\n    let may_snapshot = folders.len() == stored.len();\n    let latest = scan.0.clone();'''
+          new = '''    let folders = configured_music_folders(&settings)?;\n    let roots_complete = folders.len() == stored.len();\n    let latest = scan.0.clone();'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('root completeness anchor changed')
+              text = text.replace(old, new, 1)
+
+          old = '''    tauri::async_runtime::spawn_blocking(move || {\n        let result = library::scan(&folders, request_id, &latest)?;\n        if may_snapshot {\n            if let Err(error) = library_snapshot::save(&folders, &result) {\n                eprintln!("[library snapshot] failed to persist cache: {error}");\n            }\n        }\n        Ok(result)\n    })'''
+          new = '''    tauri::async_runtime::spawn_blocking(move || {\n        let result = library::scan(&folders, request_id, &latest, roots_complete)?;\n        if let Err(error) = library_snapshot::save(&folders, &result) {\n            eprintln!("[library snapshot] failed to persist cache: {error}");\n        }\n        Ok(result)\n    })'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('scan call anchor changed')
+              text = text.replace(old, new, 1)
+          lib.write_text(text)
+          PY
+      - name: Commit integration if needed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src/library.rs src-tauri/src/lib.rs
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: preserve restore state across incomplete library scans"
+            git push
+          fi
