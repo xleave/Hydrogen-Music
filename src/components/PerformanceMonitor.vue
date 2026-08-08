@@ -38,7 +38,10 @@ let previousIpcTotal = 0
 let previousAudioStatus = 0
 let previousSampleAt = 0
 
-const visible = computed(() => route.name === 'settings')
+// Collapsed, the control only exists in Settings. Once explicitly expanded it
+// follows the user across routes so a playback/navigation spike can actually
+// be reproduced while the diagnostic session stays alive.
+const visible = computed(() => route.name === 'settings' || expanded.value)
 const selectedCount = computed(() => currentSelectedSongs.value?.length || 0)
 const queueCount = computed(() => songList.value?.length || 0)
 
@@ -136,15 +139,8 @@ function toggleMonitor() {
 }
 
 watch(expanded, (value) => {
-  if (value && visible.value) startMonitoring()
+  if (value) startMonitoring()
   else stopMonitoring()
-})
-
-watch(visible, (value) => {
-  if (!value) {
-    expanded.value = false
-    stopMonitoring()
-  }
 })
 
 onBeforeUnmount(stopMonitoring)
@@ -158,7 +154,7 @@ onBeforeUnmount(stopMonitoring)
     </button>
 
     <div v-if="expanded" class="monitor-body">
-      <div class="monitor-note">仅展开时采样；用于定位 renderer / IPC / 数据规模热点。</div>
+      <div class="monitor-note">仅展开时采样；展开后可跨页面复现播放、滚动和切页卡顿。</div>
 
       <div class="metric-section">
         <div class="metric-title">FRAME</div>
