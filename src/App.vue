@@ -33,12 +33,12 @@
     <WindowControl class="window-control"></WindowControl>
   </div>
   <Transition name="widget">
-    <div class="musicWidget" v-if="playerStore.hasPlaylist" v-show="playerStore.widgetState">
+    <div class="musicWidget" v-if="playerStore.hasPlaylist && playerStore.widgetState">
       <MusicWidget></MusicWidget>
     </div>
   </Transition>
   <Transition name="player">
-    <div class="musicPlayer" v-if="playerStore.hasPlaylist" v-show="!playerStore.widgetState">
+    <div class="musicPlayer" v-if="playerStore.hasPlaylist && !playerStore.widgetState">
       <MusicPlayer></MusicPlayer>
     </div>
   </Transition>
