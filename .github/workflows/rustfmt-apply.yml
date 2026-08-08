@@ -1,0 +1,32 @@
+name: Apply rustfmt once
+
+on:
+  push:
+    branches: ["agent/rust-local-player"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'ci: apply rustfmt once'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/rust-local-player
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply rustfmt and remove one-time workflows
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          rm -f .github/workflows/rustfmt-apply.yml .github/workflows/rustfmt-diagnostic.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri .github/workflows/rustfmt-apply.yml .github/workflows/rustfmt-diagnostic.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'style: apply rustfmt and remove diagnostic workflow'
+          git push origin HEAD:agent/rust-local-player
