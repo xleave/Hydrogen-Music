@@ -17,6 +17,7 @@ let settingsSavedRevision = 0
 let pendingSettingsPayload = null
 let settingsSaveTimer = null
 let settingsSaveLoop = null
+let settingsInitialized = false
 
 function folderSignature(folders) {
   return [...(folders || [])]
@@ -98,12 +99,20 @@ export async function initSettings() {
 
   const previousFolders = folderSignature(localStore.localFolderSettings)
   const nextFolders = [...(settings.local.localFolder || [])]
-  const rootsChanged = previousFolders !== folderSignature(nextFolders)
+  const rootsChanged = settingsInitialized && previousFolders !== folderSignature(nextFolders)
   localStore.localFolderSettings = nextFolders
   localStore.quitApp = settings.other.quitApp
+  settingsInitialized = true
 
   if (rootsChanged) invalidateLocalLibrary()
   if (nextFolders.length && (rootsChanged || !localStore.localDirectoryTree)) {
+    if (!rootsChanged && !localStore.localDirectoryTree) {
+      await windowApi.getCachedLibrary({ type: 'local' })
+        .catch((error) => console.error('[library cache]', error))
+    }
+    // Always reconcile with the filesystem in the background. The SQLite
+    // metadata index makes unchanged tracks cheap, while a valid snapshot lets
+    // the UI and pending playback restore become usable immediately.
     scanMusic({ type: 'local', refresh: rootsChanged })
   }
   if (!nextFolders.length) invalidateLocalLibrary()
