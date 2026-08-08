@@ -424,18 +424,16 @@ async fn scan_local_music(
         .map_err(|error| error.to_string())
         .map(|value| stored_music_folders_from_value(&value))?;
     let folders = configured_music_folders(&settings)?;
-    let may_snapshot = folders.len() == stored.len();
+    let roots_complete = folders.len() == stored.len();
     let latest = scan.0.clone();
     let previous = latest.fetch_max(request_id, Ordering::AcqRel);
     if previous > request_id {
         return Err(library::STALE_SCAN.to_string());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let result = library::scan(&folders, request_id, &latest)?;
-        if may_snapshot {
-            if let Err(error) = library_snapshot::save(&folders, &result) {
-                eprintln!("[library snapshot] failed to persist cache: {error}");
-            }
+        let result = library::scan(&folders, request_id, &latest, roots_complete)?;
+        if let Err(error) = library_snapshot::save(&folders, &result) {
+            eprintln!("[library snapshot] failed to persist cache: {error}");
         }
         Ok(result)
     })

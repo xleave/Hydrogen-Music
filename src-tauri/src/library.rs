@@ -39,6 +39,7 @@ pub struct ScanResult {
     loca_files_metadata: Vec<Node>,
     count: usize,
     truncated: bool,
+    complete: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -192,6 +193,7 @@ pub fn scan(
     folders: &[PathBuf],
     request_id: u64,
     latest_request_id: &AtomicU64,
+    roots_complete: bool,
 ) -> Result<ScanResult, String> {
     ensure_current(request_id, latest_request_id)?;
     let index_path = library_index_path();
@@ -252,8 +254,9 @@ pub fn scan(
     let metadata_roots: Vec<Node> = results.into_iter().map(|(n, _)| n).collect();
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
 
+    let complete = roots_complete && budget.may_prune_cache();
     if let Some(index_path) = index_path.as_deref() {
-        if let Err(error) = persist_index(index_path, &cache, budget.may_prune_cache()) {
+        if let Err(error) = persist_index(index_path, &cache, complete) {
             eprintln!("[library index] failed to persist cache: {error}");
         }
     }
@@ -263,6 +266,7 @@ pub fn scan(
         loca_files_metadata: metadata_roots,
         count,
         truncated: budget.truncated.load(Ordering::Acquire),
+        complete,
     })
 }
 
