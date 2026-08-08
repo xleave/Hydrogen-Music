@@ -32,7 +32,7 @@
             </div>
         </div>
         <Transition name="children">
-            <div class="children-folder" v-if="item.children.length !== 0" v-show="item.show">
+            <div class="children-folder" v-if="item.children.length !== 0 && item.show">
                 <ChildrenFolder :folderChildren="item.children" :type="props.type"></ChildrenFolder>
             </div>
         </Transition>
