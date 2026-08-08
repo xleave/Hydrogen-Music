@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     name: Frontend and Rust checks
@@ -26,11 +29,16 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - run: npm run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - name: Upload resolved Cargo lockfile
-        uses: actions/upload-artifact@v6
-        with:
-          name: resolved-cargo-lock
-          path: src-tauri/Cargo.lock
+      - name: Commit resolved Cargo lockfile
+        if: github.event_name == 'push' && github.ref == 'refs/heads/agent/rust-local-player'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/Cargo.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update Rust dependency lockfile"
+            git push
+          fi
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Install cargo-audit
