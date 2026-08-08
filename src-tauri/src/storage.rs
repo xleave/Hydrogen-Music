@@ -15,6 +15,21 @@ fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     Ok(directory.join(name))
 }
 
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("bak")
+}
+
+fn recover_backup(path: &Path) -> Result<(), String> {
+    if path.is_file() {
+        return Ok(());
+    }
+    let backup = backup_path(path);
+    if backup.is_file() {
+        fs::rename(&backup, path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn quarantine_corrupt(path: &Path) {
     let corrupt = path.with_extension("corrupt.json");
     let _ = fs::remove_file(&corrupt);
@@ -34,6 +49,7 @@ pub fn read_json_with_limit(
     max_bytes: u64,
 ) -> Result<Value, String> {
     let path = data_file(app, name)?;
+    recover_backup(&path)?;
     if !path.is_file() {
         write_json(app, name, &default)?;
         return Ok(default);
@@ -60,6 +76,7 @@ pub fn read_optional_json_with_limit(
     max_bytes: u64,
 ) -> Result<Option<Value>, String> {
     let path = data_file(app, name)?;
+    recover_backup(&path)?;
     if !path.is_file() {
         return Ok(None);
     }
@@ -77,6 +94,28 @@ pub fn read_optional_json_with_limit(
     }
 }
 
+fn replace_file(temporary: &Path, destination: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let backup = backup_path(destination);
+        let _ = fs::remove_file(&backup);
+        if destination.exists() {
+            fs::rename(destination, &backup).map_err(|error| error.to_string())?;
+        }
+        if let Err(error) = fs::rename(temporary, destination) {
+            if backup.exists() {
+                let _ = fs::rename(&backup, destination);
+            }
+            return Err(error.to_string());
+        }
+        let _ = fs::remove_file(backup);
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    fs::rename(temporary, destination).map_err(|error| error.to_string())
+}
+
 pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), String> {
     let path = data_file(app, name)?;
     let content = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
@@ -92,10 +131,7 @@ pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), Stri
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
-    if cfg!(windows) && path.exists() {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
-    }
-    fs::rename(&tmp, &path).map_err(|error| error.to_string())?;
+    replace_file(&tmp, &path)?;
     if let Some(parent) = path.parent() {
         if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
             let _ = directory.sync_all();
