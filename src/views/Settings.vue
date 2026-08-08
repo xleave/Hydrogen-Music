@@ -12,6 +12,8 @@ import {
 import { usePlayerStore } from '../store/playerStore'
 import { insertCustomFontStyle } from '../utils/setFont'
 import Selector from '../components/Selector.vue'
+import SettingButton from '../components/settings/SettingButton.vue'
+import SettingToggle from '../components/settings/SettingToggle.vue'
 
 const router = useRouter()
 const playerStore = usePlayerStore()
@@ -49,10 +51,6 @@ const globalShortcutState = computed(() => {
   if (globalShortcutError.value) return { label: '当前会话不支持全局快捷键', failed: true }
   return { label: '全局快捷键已注册', failed: false }
 })
-
-const fontPreviewStyle = computed(() => customFont.value
-  ? { fontFamily: customFont.value }
-  : {})
 
 function buildSettings() {
   return {
@@ -197,7 +195,7 @@ function changeShortcut(id, type) {
 }
 
 function updateShortcut() {
-  let shortcut = []
+  const shortcut = []
   newShortcut.value.forEach((event) => {
     if (event.keyCode >= 65 && event.keyCode <= 90) shortcut.push(event.code.replace('Key', ''))
     else if (['Control', 'Shift', 'Alt'].includes(event.key)) shortcut.push(event.key)
@@ -296,19 +294,13 @@ function toGithub() {
             <div class="option">
               <div class="option-name">开启背景封面模糊</div>
               <div class="option-operation">
-                <div class="toggle" @click="setCoverBlur">
-                  <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.coverBlur }">{{ playerStore.coverBlur ? '已开启' : '已关闭' }}</div>
-                  <Transition name="toggle"><div class="toggle-on" v-show="playerStore.coverBlur"></div></Transition>
-                </div>
+                <SettingToggle :active="playerStore.coverBlur" :label="playerStore.coverBlur ? '已开启' : '已关闭'" @toggle="setCoverBlur" />
               </div>
             </div>
             <div class="option">
               <div class="option-name">开启歌词模糊</div>
               <div class="option-operation">
-                <div class="toggle" @click="setLyricBlur">
-                  <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.lyricBlur }">{{ playerStore.lyricBlur ? '已开启' : '已关闭' }}</div>
-                  <Transition name="toggle"><div class="toggle-on" v-show="playerStore.lyricBlur"></div></Transition>
-                </div>
+                <SettingToggle :active="playerStore.lyricBlur" :label="playerStore.lyricBlur ? '已开启' : '已关闭'" @toggle="setLyricBlur" />
               </div>
             </div>
             <div class="option"><div class="option-name">歌词字体大小</div><div class="option-operation"><input v-model="lyricSize" name="lyricSize"></div></div>
@@ -329,7 +321,7 @@ function toGithub() {
                   <div class="selected-folder" :title="item" @contextmenu.prevent="deleteLocalFolder(index)" v-for="(item, index) in localFolder" :key="item">{{ item || '请添加' }}</div>
                   <div class="tip">可添加多个目录；右键移除目录。大型音乐库扫描需要一定时间。</div>
                 </div>
-                <div class="add-option" @click="selectFolder('local')">添加</div>
+                <SettingButton class="add-option" padding="5px 15px" :font-size="13" @click="selectFolder('local')">添加</SettingButton>
               </div>
             </div>
           </div>
@@ -345,10 +337,11 @@ function toGithub() {
                 <div class="shortcut-status" :class="{ 'shortcut-status-failed': globalShortcutState.failed }">{{ globalShortcutState.label }}</div>
               </div>
               <div class="option-operation">
-                <div class="toggle" @click="globalShortcuts = !globalShortcuts">
-                  <div class="toggle-off" :class="{ 'toggle-on-in': globalShortcuts && !globalShortcutState.failed }">{{ globalShortcuts ? (globalShortcutState.failed ? '不可用' : '已开启') : '已关闭' }}</div>
-                  <Transition name="toggle"><div class="toggle-on" v-show="globalShortcuts && !globalShortcutState.failed"></div></Transition>
-                </div>
+                <SettingToggle
+                  :active="globalShortcuts && !globalShortcutState.failed"
+                  :label="globalShortcuts ? (globalShortcutState.failed ? '不可用' : '已开启') : '已关闭'"
+                  @toggle="globalShortcuts = !globalShortcuts"
+                />
               </div>
             </div>
             <div class="shortcuts-title">
@@ -361,7 +354,7 @@ function toGithub() {
               <div class="shortcut" :class="{ 'shortcut-selected': selectedShortcut?.id === item.id && !selectedShortcut?.type }" @click.stop="changeShortcut(item.id, false)">{{ formatShortcutName(item.shortcut) }}</div>
               <div class="globalShortcut" :class="{ 'shortcut-selected': selectedShortcut?.id === item.id && selectedShortcut?.type, 'forbid-shortcuts': !globalShortcuts }" @click.stop="changeShortcut(item.id, true)">{{ formatShortcutName(item.globalShortcut) }}</div>
             </div>
-            <div class="default-shortcuts" @click="setDefaultShortcuts">恢复默认快捷键</div>
+            <SettingButton class="default-shortcuts" :width="132" @click="setDefaultShortcuts">恢复默认快捷键</SettingButton>
           </div>
         </div>
 
@@ -379,7 +372,6 @@ function toGithub() {
                   searchable
                   :search-placeholder="fontLoading ? '正在读取系统字体…' : '搜索系统字体'"
                 />
-                <div class="font-preview" :style="fontPreviewStyle">Hydrogen Music 字体预览 0123456789</div>
               </div>
             </div>
             <div class="option">
@@ -405,6 +397,7 @@ function toGithub() {
   height: 100%;
 
   .view-control {
+    margin-top: 14Px;
     margin-bottom: 15Px;
     margin-left: -8Px;
     height: 32Px;
@@ -420,11 +413,11 @@ function toGithub() {
       &:active { transform: scale(.9); }
     }
 
-    .router-last { margin-right: 5Px; }
+    .router-last { margin-right: 10Px; }
     .setting-title { font: 17Px SourceHanSansCN-Bold; color: black; }
     .save-status {
-      margin-left: 12Px;
-      padding-left: 10Px;
+      margin-left: 20Px;
+      padding-left: 14Px;
       border-left: .5Px solid rgba(0, 0, 0, .18);
       font: 11Px SourceHanSansCN-Bold;
       color: rgba(0, 0, 0, .45);
@@ -438,7 +431,7 @@ function toGithub() {
     margin: 0 auto;
     padding-bottom: 140px;
     width: 80%;
-    height: calc(100% - 47px);
+    height: calc(100% - 61px);
     overflow: auto;
     &::-webkit-scrollbar { display: none; }
 
@@ -498,29 +491,7 @@ function toGithub() {
             font: 13px SourceHanSansCN-Bold;
             text-align: center;
             transition: .2s;
-            &:hover { cursor: pointer; opacity: .8; box-shadow: 0 0 0 1px black; }
-          }
-
-          .toggle {
-            margin-right: 1px;
-            height: 34px;
-            width: 200px;
-            position: relative;
-            overflow: hidden;
-            &:hover { cursor: pointer; }
-            .toggle-on,
-            .toggle-off {
-              padding: 5px 10px;
-              width: 100%;
-              height: 100%;
-              box-sizing: border-box;
-              font: 13px SourceHanSansCN-Bold;
-              transition: .2s;
-              line-height: 24px;
-            }
-            .toggle-off { background-color: rgba(255, 255, 255, .35); }
-            .toggle-on { background-color: black; position: absolute; top: 0; left: 0; z-index: -1; }
-            .toggle-on-in { color: white; background-color: transparent; }
+            &:hover { cursor: pointer; opacity: .8; box-shadow: inset 0 0 0 1px black; }
           }
 
           .local-folder {
@@ -545,32 +516,15 @@ function toGithub() {
               }
               .tip { font: 10px SourceHanSansCN-Bold; color: black; text-align: left; }
             }
-            .add-option {
-              margin-left: 15px;
-              padding: 5px 15px;
-              font: 13px SourceHanSansCN-Bold;
-              color: black;
-              background-color: rgba(255, 255, 255, .35);
-              transition: .2s;
-              &:hover { cursor: pointer; opacity: .8; box-shadow: 0 0 0 1px black; }
-            }
+            .add-option { margin-left: 15px; }
           }
 
           .font-control {
             width: 200px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 0;
             :deep(.selector) { width: 200px; }
-            .font-preview {
-              width: 200px;
-              overflow: hidden;
-              white-space: nowrap;
-              text-overflow: ellipsis;
-              text-align: center;
-              font-size: 11px;
-              color: rgba(0, 0, 0, .55);
-            }
           }
         }
 
@@ -611,19 +565,10 @@ function toGithub() {
           .shortcut-name { background-color: transparent; }
           .shortcut,
           .globalShortcut { &:hover { cursor: pointer; } }
-          .shortcut-selected { box-shadow: 0 0 0 1px black; }
+          .shortcut-selected { box-shadow: inset 0 0 0 1px black; }
         }
 
-        .default-shortcuts {
-          margin-top: 15px;
-          width: 120px;
-          padding: 6px;
-          background-color: rgba(255, 255, 255, .35);
-          font: 14px SourceHanSansCN-Bold;
-          transition: .2s;
-          color: black;
-          &:hover { cursor: pointer; box-shadow: 0 0 0 1px black; }
-        }
+        .default-shortcuts { margin-top: 15px; }
       }
     }
 
@@ -642,9 +587,4 @@ function toGithub() {
     }
   }
 }
-
-.toggle-enter-active,
-.toggle-leave-active { transition: .1s; }
-.toggle-enter-from,
-.toggle-leave-to { transform: translateX(-100%); }
 </style>
