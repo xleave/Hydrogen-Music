@@ -23,6 +23,7 @@ let playlistHydrated = false
 let saveRevision = 0
 let savedRevision = 0
 let pendingSnapshot = null
+let lastQueuedSnapshot = null
 let saveLoop = null
 let structureRevision = 0
 let cachedStructureRevision = -1
@@ -238,7 +239,10 @@ function ensureSaveLoop() {
 
 export function savePlaylist() {
   if (!playlistHydrated) return Promise.resolve()
-  pendingSnapshot = compactPlaylistJson()
+  const snapshot = compactPlaylistJson()
+  if (snapshot === lastQueuedSnapshot) return saveLoop || Promise.resolve()
+  lastQueuedSnapshot = snapshot
+  pendingSnapshot = snapshot
   saveRevision += 1
   return ensureSaveLoop()
 }
@@ -263,16 +267,11 @@ export function restorePlaylistFromLibrary(library) {
   const byId = new Map()
   for (const track of tracks) {
     byId.set(track.id, track)
-    // v3 snapshots used the absolute path as the track id. Keep this alias so
-    // future compact ids can migrate old snapshots without losing the queue.
     if (track.url) byId.set(track.url, track)
   }
   const songIds = saved.songIds || saved.songList?.map((track) => track.id) || []
   const shuffledSongIds = saved.shuffledSongIds || saved.shuffledList?.map((track) => track.id) || []
   const restored = songIds.map((id) => byId.get(id)).filter(Boolean)
-  // An empty result can mean a removable/NAS library is temporarily absent.
-  // Keep the pending snapshot until at least one saved track can be resolved,
-  // or until an explicit user action supersedes it.
   if (!restored.length) return
 
   pendingPlaylist = null
