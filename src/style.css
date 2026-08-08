@@ -10,6 +10,17 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+
+  /* One stacking scale for every global surface. */
+  --z-content: 0;
+  --z-player: 100;
+  --z-player-widget: 200;
+  --z-settings: 900;
+  --z-chrome: 1000;
+  --z-notice: 1100;
+  --z-popover: 1300;
+  --z-diagnostic: 1500;
+  --z-modal: 2000;
 }
 
 a {
@@ -68,14 +79,13 @@ body {
   gap: 0 !important;
 }
 
-/* The fixed-height RecycleScroller is the only scroll owner for song rows. */
+/* The fixed-height scroller is the only scroll owner for song rows. */
 .local-music-detail .local-music-list {
   overflow: hidden !important;
 }
 
 .local-music-detail .virtual-list {
   contain: layout paint style;
-  will-change: scroll-position;
   overscroll-behavior: contain;
 }
 
@@ -99,7 +109,6 @@ body {
 
 .local-music-detail .vue-recycle-scroller__item-view {
   contain: layout paint style;
-  will-change: transform;
 }
 
 .local-music-detail .list-item {
