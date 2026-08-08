@@ -416,7 +416,6 @@ async fn get_cached_library(
 async fn scan_local_music(
     settings: State<'_, SettingsState>,
     scan: State<'_, ScanState>,
-    request_id: u64,
 ) -> Result<library::ScanResult, String> {
     let stored = settings
         .0
@@ -426,10 +425,9 @@ async fn scan_local_music(
     let folders = configured_music_folders(&settings)?;
     let roots_complete = folders.len() == stored.len();
     let latest = scan.0.clone();
-    let previous = latest.fetch_max(request_id, Ordering::AcqRel);
-    if previous > request_id {
-        return Err(library::STALE_SCAN.to_string());
-    }
+    // Native ownership prevents a WebView reload from resetting the generation
+    // below the long-lived Rust process state.
+    let request_id = latest.fetch_add(1, Ordering::AcqRel) + 1;
     tauri::async_runtime::spawn_blocking(move || {
         let result = library::scan(&folders, request_id, &latest, roots_complete)?;
         if let Err(error) = library_snapshot::save(&folders, &result) {
