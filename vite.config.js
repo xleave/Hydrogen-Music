@@ -18,10 +18,14 @@ export default defineConfig({
     host: '127.0.0.1',
   },
   resolve: {
-    alias: {
-      '@': resolve(__dirname, './src'),
-      'axios': resolve(__dirname, './src/platform/noNetwork.js')
-    }
+    alias: [
+      { find: '@', replacement: resolve(__dirname, './src') },
+      { find: 'axios', replacement: resolve(__dirname, './src/platform/noNetwork.js') },
+      // All Hydrogen lists use a fixed row height. Keep the existing import
+      // surface while replacing the generic per-row transform implementation
+      // with our WebKitGTK-friendly fixed-row scroller.
+      { find: /^vue-virtual-scroller$/, replacement: resolve(__dirname, './src/components/FixedVirtualScroller.js') },
+    ]
   },
   optimizeDeps: {
     exclude: []
