@@ -128,7 +128,7 @@ onBeforeUnmount(() => window.removeEventListener('click', clickOutside))
 
 .selector-option {
   position: absolute;
-  z-index: 1400;
+  z-index: var(--z-popover);
   overflow-y: auto;
   width: 200px;
   background: rgb(228, 240, 240);
