@@ -1,8 +1,22 @@
 import { markRaw } from 'vue'
+import { createCoverBackdrop } from '../coverBackdrop'
 import { playerRefs } from './state'
 import { loadLocalLyrics, prepareLyricsForTrackChange, resetLyricAnimation, revealLyrics } from './lyrics'
 
-const { coverUrl, currentIndex, currentMusic, localBase64Img, playMode, playing, progress, songId, songList, time, volume } = playerRefs
+const {
+  coverBackdropUrl,
+  coverUrl,
+  currentIndex,
+  currentMusic,
+  localBase64Img,
+  playMode,
+  playing,
+  progress,
+  songId,
+  songList,
+  time,
+  volume,
+} = playerRefs
 const PROGRESS_POLL_INTERVAL_MS = 200
 let progressTimer = null
 let statusPending = false
@@ -178,6 +192,19 @@ export async function getSongUrl(index, autoplay) {
     if (requestId !== trackRequestId) return
     localBase64Img.value = cover
     updateMediaSession()
+
+    if (!cover) {
+      coverBackdropUrl.value = null
+      return
+    }
+
+    createCoverBackdrop(cover).then((backdrop) => {
+      if (requestId !== trackRequestId) return
+      coverBackdropUrl.value = backdrop
+    }).catch((error) => {
+      reportAudioError('cover.backdrop', error)
+      if (requestId === trackRequestId) coverBackdropUrl.value = cover
+    })
   }).catch((error) => reportAudioError('cover.load', error))
 
   loadLocalLyrics(track.url, requestId, () => trackRequestId)
