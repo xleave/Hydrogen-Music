@@ -21,6 +21,9 @@ jobs:
         run: git diff -- src-tauri > rustfmt.patch
       - uses: actions/upload-artifact@v6
         with:
-          name: rustfmt-diff
-          path: rustfmt.patch
+          name: rustfmt-output
+          path: |
+            rustfmt.patch
+            src-tauri/build.rs
+            src-tauri/src/*.rs
           if-no-files-found: error
