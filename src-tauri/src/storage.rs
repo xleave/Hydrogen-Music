@@ -6,8 +6,6 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-const DEFAULT_MAX_JSON_BYTES: u64 = 64 * 1024 * 1024;
-
 fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let directory = app
         .path()
@@ -56,10 +54,6 @@ pub fn read_json_with_limit(
     }
 }
 
-pub fn read_json(app: &AppHandle, name: &str, default: Value) -> Result<Value, String> {
-    read_json_with_limit(app, name, default, DEFAULT_MAX_JSON_BYTES)
-}
-
 pub fn read_optional_json_with_limit(
     app: &AppHandle,
     name: &str,
@@ -81,10 +75,6 @@ pub fn read_optional_json_with_limit(
             Ok(None)
         }
     }
-}
-
-pub fn read_optional_json(app: &AppHandle, name: &str) -> Result<Option<Value>, String> {
-    read_optional_json_with_limit(app, name, DEFAULT_MAX_JSON_BYTES)
 }
 
 pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), String> {
