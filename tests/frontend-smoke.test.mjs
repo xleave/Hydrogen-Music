@@ -12,8 +12,12 @@ test('empty hydrated playlist does not mount player surfaces', () => {
   const myMusic = source('src/views/MyMusic.vue')
 
   assert.match(store, /hasPlaylist:\s*\(state\)\s*=>\s*Array\.isArray\(state\.songList\)\s*&&\s*state\.songList\.length\s*>\s*0/)
-  assert.equal((app.match(/v-if="playerStore\.hasPlaylist"/g) || []).length, 2)
+  assert.equal((app.match(/v-if="playerStore\.hasPlaylist\s*&&/g) || []).length, 2)
+  assert.match(app, /v-if="playerStore\.hasPlaylist\s*&&\s*playerStore\.widgetState"/)
+  assert.match(app, /v-if="playerStore\.hasPlaylist\s*&&\s*!playerStore\.widgetState"/)
   assert.doesNotMatch(app, /v-if="playerStore\.songList"/)
+  assert.doesNotMatch(app, /class="musicWidget"[^>]*v-show=/)
+  assert.doesNotMatch(app, /class="musicPlayer"[^>]*v-show=/)
   assert.match(myMusic, /my-music-full': !playerStore\.hasPlaylist/)
 })
 
