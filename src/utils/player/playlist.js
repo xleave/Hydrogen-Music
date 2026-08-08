@@ -19,6 +19,11 @@ const {
 } = playerRefs
 
 let pendingPlaylist = null
+let playlistHydrated = false
+let saveRevision = 0
+let savedRevision = 0
+let pendingSnapshot = null
+let saveLoop = null
 
 export function localMusicHandle(list, firstOnly = false) {
   const tracks = list.map((song) => ({
@@ -44,7 +49,13 @@ function flattenTracks(nodes, result = []) {
   return result
 }
 
+function supersedePendingRestore() {
+  pendingPlaylist = null
+  playlistHydrated = true
+}
+
 export function addToList(listType, tracks) {
+  supersedePendingRestore()
   listInfo.value = { id: 'local', type: listType }
   songList.value = [...tracks]
   savePlaylist()
@@ -53,6 +64,11 @@ export function addToList(listType, tracks) {
 export function addLocalMusicTOList(listType, localTracks, playId, playIndex) {
   addToList(listType, localMusicHandle(localTracks))
   addSong(playId, playIndex, true)
+  savePlaylist()
+}
+
+export function markPlaylistCleared() {
+  supersedePendingRestore()
   savePlaylist()
 }
 
@@ -133,6 +149,7 @@ export function playAll(listType, tracks) {
 export function addToNext(nextSong, autoplay) {
   if (!nextSong) return
   if (!songList.value) songList.value = []
+  supersedePendingRestore()
   if (nextSong.id === songId.value) return
 
   const existingIndex = songList.value.findIndex((song) => song.id === nextSong.id)
@@ -170,10 +187,30 @@ function compactPlaylist() {
   }
 }
 
+async function drainPlaylistSaves() {
+  try {
+    while (savedRevision < saveRevision) {
+      const revision = saveRevision
+      const payload = pendingSnapshot
+      await windowApi.saveLastPlaylist(payload)
+      savedRevision = revision
+    }
+  } finally {
+    saveLoop = null
+  }
+  if (savedRevision < saveRevision) return ensureSaveLoop()
+}
+
+function ensureSaveLoop() {
+  if (!saveLoop) saveLoop = drainPlaylistSaves()
+  return saveLoop
+}
+
 export function savePlaylist() {
-  // null 表示音乐库/播放队列尚未恢复完成，不能用空快照覆盖上次有效状态。
-  if (songList.value === null) return Promise.resolve()
-  return windowApi.saveLastPlaylist(JSON.stringify(compactPlaylist()))
+  if (!playlistHydrated) return Promise.resolve()
+  pendingSnapshot = JSON.stringify(compactPlaylist())
+  saveRevision += 1
+  return ensureSaveLoop()
 }
 
 export async function loadLastSong() {
@@ -181,38 +218,50 @@ export async function loadLastSong() {
   if (pendingPlaylist) {
     if (Number.isFinite(pendingPlaylist.volume)) volume.value = Math.max(0, Math.min(1, pendingPlaylist.volume))
     if (Number.isInteger(pendingPlaylist.playMode)) playMode.value = Math.max(0, Math.min(3, pendingPlaylist.playMode))
+  } else {
+    songList.value = []
+    playlistHydrated = true
   }
   restorePlaylistFromLibrary(localStore.localMusicList)
 }
 
 export function restorePlaylistFromLibrary(library) {
-  if (!pendingPlaylist || !library) return
+  if (!pendingPlaylist || !Array.isArray(library) || !library.length) return
   const saved = pendingPlaylist
   const tracks = localMusicHandle(flattenTracks(library))
-  const byId = new Map(tracks.map((track) => [track.id, track]))
+  const byId = new Map()
+  for (const track of tracks) {
+    byId.set(track.id, track)
+    // v3 snapshots used the absolute path as the track id. Keep this alias so
+    // future compact ids can migrate old snapshots without losing the queue.
+    if (track.url) byId.set(track.url, track)
+  }
   const songIds = saved.songIds || saved.songList?.map((track) => track.id) || []
   const shuffledSongIds = saved.shuffledSongIds || saved.shuffledList?.map((track) => track.id) || []
   const restored = songIds.map((id) => byId.get(id)).filter(Boolean)
-  pendingPlaylist = null
+  // An empty result can mean a removable/NAS library is temporarily absent.
+  // Keep the pending snapshot until at least one saved track can be resolved,
+  // or until an explicit user action supersedes it.
   if (!restored.length) return
 
+  pendingPlaylist = null
+  playlistHydrated = true
   songList.value = restored
   shuffledList.value = shuffledSongIds.map((id) => byId.get(id)).filter(Boolean)
   const fallbackIndex = Math.max(0, Math.min(Number(saved.currentIndex) || 0, restored.length - 1))
   const selectedId = saved.currentSongId || restored[fallbackIndex].id
-  const savedIndex = restored.findIndex((track) => track.id === selectedId)
+  const savedIndex = restored.findIndex((track) => track.id === selectedId || track.url === selectedId)
   currentIndex.value = savedIndex >= 0 ? savedIndex : fallbackIndex
   songId.value = restored[currentIndex.value].id
   shuffleIndex.value = Math.max(0, Math.min(Number(saved.shuffleIndex) || 0, Math.max(0, shuffledList.value.length - 1)))
   if (playMode.value === 3 && !shuffledList.value.length) setShuffledList()
 
-  const resumeAt = Number.isFinite(saved.progress) ? Math.max(0, saved.progress) : 0
-  progress.value = resumeAt
-  getSongUrl(currentIndex.value, false).then(() => {
-    if (resumeAt > 0) {
-      if (currentMusic.value?.state() === 'loaded') currentMusic.value.seek(resumeAt)
-      else currentMusic.value?.once('load', () => currentMusic.value?.seek(resumeAt))
-    }
+  const requestedResume = Number.isFinite(saved.progress) ? Math.max(0, saved.progress) : 0
+  getSongUrl(currentIndex.value, false).then((music) => {
+    const duration = Number.isFinite(music?.duration?.()) ? Math.max(0, music.duration()) : 0
+    const resumeAt = Math.min(requestedResume, duration)
+    progress.value = resumeAt
+    if (resumeAt > 0 && music?.state() === 'loaded') music.seek(resumeAt)
     windowApi.audioSetVolume(volume.value).catch((error) => console.error('[restore volume]', error))
     windowApi.setSystemMediaVolume(volume.value).catch((error) => console.error('[restore media volume]', error))
   })
