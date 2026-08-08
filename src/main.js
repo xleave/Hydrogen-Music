@@ -4,11 +4,9 @@ import './style.css'
 import 'normalize.css'
 import './assets/css/common.css'
 import './assets/css/fonts.css'
-import { installWindowApi } from './platform/windowApi'
-import { initializePlayerLifecycle } from './utils/player'
 
-let bootStage = 'install-window-api'
-const disposeWindowApi = installWindowApi()
+let bootStage = 'renderer-entry'
+let disposeWindowApi = null
 let disposePlayerLifecycle = null
 
 const preventContextMenu = (event) => event.preventDefault()
@@ -62,12 +60,25 @@ function renderFatalBootstrapError(error, source) {
 }
 
 async function bootstrap() {
+  bootStage = 'load-platform-api'
+  const { installWindowApi } = await import('./platform/windowApi')
+
+  bootStage = 'install-window-api'
+  disposeWindowApi = installWindowApi()
+
   bootStage = 'load-renderer-modules'
-  const [{ default: App }, { default: router }, { init }, { default: lazy }] = await Promise.all([
+  const [
+    { default: App },
+    { default: router },
+    { init },
+    { default: lazy },
+    { initializePlayerLifecycle },
+  ] = await Promise.all([
     import('./App.vue'),
     import('./router/router.js'),
     import('./utils/initApp'),
     import('./utils/lazy'),
+    import('./utils/player'),
   ])
 
   bootStage = 'create-vue-app'
@@ -107,6 +118,6 @@ if (import.meta.hot) {
     window.removeEventListener('error', handleWindowError)
     window.removeEventListener('unhandledrejection', handleUnhandledRejection)
     disposePlayerLifecycle?.()
-    disposeWindowApi()
+    disposeWindowApi?.()
   })
 }
