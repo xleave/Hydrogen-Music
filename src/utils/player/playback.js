@@ -3,8 +3,8 @@ import { playerRefs } from './state'
 import { loadLocalLyrics, prepareLyricsForTrackChange, resetLyricAnimation, revealLyrics } from './lyrics'
 
 const { coverUrl, currentIndex, currentMusic, localBase64Img, playMode, playing, progress, songId, songList, time, volume } = playerRefs
-let progressFrame = null
-let lastProgressUpdate = 0
+const PROGRESS_POLL_INTERVAL_MS = 200
+let progressTimer = null
 let statusPending = false
 let sequentialPlaybackEnded = false
 let nextTrackHandler = null
@@ -89,17 +89,14 @@ export function registerPlaybackCheckpointHandler(handler) { playbackCheckpointH
 function currentTrack() { return songList.value?.[currentIndex.value] ?? null }
 
 export function stopProgress() {
-  if (progressFrame !== null) cancelAnimationFrame(progressFrame)
-  progressFrame = null
-  lastProgressUpdate = 0
+  if (progressTimer !== null) clearInterval(progressTimer)
+  progressTimer = null
 }
 
-function updateProgress(timestamp = 0) {
-  if (playing.value) progressFrame = requestAnimationFrame(updateProgress)
-  if (statusPending || (lastProgressUpdate !== 0 && timestamp - lastProgressUpdate < 200)) return
+function updateProgress() {
+  if (!playing.value || statusPending) return
   const music = currentMusic.value
   if (!music) return
-  lastProgressUpdate = timestamp
   statusPending = true
   music.sync().then((status) => {
     if (music !== currentMusic.value) return
@@ -118,7 +115,11 @@ function updateProgress(timestamp = 0) {
   })
 }
 
-export function startProgress() { stopProgress(); updateProgress() }
+export function startProgress() {
+  stopProgress()
+  updateProgress()
+  progressTimer = setInterval(updateProgress, PROGRESS_POLL_INTERVAL_MS)
+}
 
 function handleTrackEnd() {
   stopProgress()
