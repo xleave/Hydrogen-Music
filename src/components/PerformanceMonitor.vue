@@ -11,6 +11,7 @@ import {
 } from '../utils/performanceMonitor'
 
 const MONITOR_STORAGE_KEY = 'hydrogen.performanceMonitor.enabled'
+const MONITOR_POSITION_KEY = 'hydrogen.performanceMonitor.position'
 
 const route = useRoute()
 const localStore = useLocalStore()
@@ -34,9 +35,37 @@ function persistMonitorEnabled(value) {
   }
 }
 
+function readMonitorPosition() {
+  try {
+    const value = JSON.parse(localStorage.getItem(MONITOR_POSITION_KEY) || 'null')
+    if (!Number.isFinite(value?.x) || !Number.isFinite(value?.y)) return null
+    return { x: value.x, y: value.y }
+  } catch {
+    return null
+  }
+}
+
+function persistMonitorPosition(value) {
+  try {
+    localStorage.setItem(MONITOR_POSITION_KEY, JSON.stringify(value))
+  } catch {
+    // Diagnostics must never affect normal application behavior.
+  }
+}
+
 const enabled = ref(readMonitorEnabled())
 const settingsVisible = computed(() => route.name === 'settings')
 const settingsTarget = ref(null)
+const monitorPanel = ref(null)
+const panelPosition = ref(readMonitorPosition())
+const panelStyle = computed(() => panelPosition.value
+  ? {
+      left: `${panelPosition.value.x}px`,
+      top: `${panelPosition.value.y}px`,
+      right: 'auto',
+      bottom: 'auto',
+    }
+  : {})
 const metrics = ref({
   fps: 0,
   averageFrame: 0,
@@ -64,6 +93,7 @@ let previousIpcTotal = 0
 let previousAudioStatus = 0
 let previousSampleAt = 0
 let targetRevision = 0
+let dragState = null
 
 const selectedCount = computed(() => currentSelectedSongs.value?.length || 0)
 const queueCount = computed(() => songList.value?.length || 0)
@@ -194,6 +224,51 @@ function toggleMonitoring() {
   enabled.value = !enabled.value
 }
 
+function clampPanelPosition(x, y) {
+  const panel = monitorPanel.value
+  if (!panel) return { x, y }
+  const margin = 8
+  const maxX = Math.max(margin, window.innerWidth - panel.offsetWidth - margin)
+  const maxY = Math.max(margin, window.innerHeight - panel.offsetHeight - margin)
+  return {
+    x: Math.min(maxX, Math.max(margin, x)),
+    y: Math.min(maxY, Math.max(margin, y)),
+  }
+}
+
+function onPanelPointerMove(event) {
+  if (!dragState) return
+  panelPosition.value = clampPanelPosition(
+    dragState.startX + event.clientX - dragState.pointerX,
+    dragState.startY + event.clientY - dragState.pointerY,
+  )
+}
+
+function stopPanelDrag() {
+  if (!dragState) return
+  dragState = null
+  window.removeEventListener('pointermove', onPanelPointerMove)
+  window.removeEventListener('pointerup', stopPanelDrag)
+  window.removeEventListener('pointercancel', stopPanelDrag)
+  if (panelPosition.value) persistMonitorPosition(panelPosition.value)
+}
+
+function startPanelDrag(event) {
+  if (event.button !== 0 || !monitorPanel.value) return
+  event.preventDefault()
+  const rect = monitorPanel.value.getBoundingClientRect()
+  dragState = {
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+    startX: rect.left,
+    startY: rect.top,
+  }
+  panelPosition.value = { x: rect.left, y: rect.top }
+  window.addEventListener('pointermove', onPanelPointerMove)
+  window.addEventListener('pointerup', stopPanelDrag)
+  window.addEventListener('pointercancel', stopPanelDrag)
+}
+
 watch(enabled, (value) => {
   persistMonitorEnabled(value)
   if (value) startMonitoring()
@@ -204,6 +279,7 @@ watch(settingsVisible, syncSettingsTarget, { immediate: true, flush: 'post' })
 
 onBeforeUnmount(() => {
   targetRevision += 1
+  stopPanelDrag()
   stopMonitoring()
 })
 </script>
@@ -222,15 +298,10 @@ onBeforeUnmount(() => {
     </div>
   </Teleport>
 
-  <div v-if="enabled" class="performance-monitor">
-    <div class="monitor-header">
-      <span>性能监测</span>
-      <span class="monitor-state">常驻</span>
-    </div>
+  <div v-if="enabled" ref="monitorPanel" class="performance-monitor" :style="panelStyle">
+    <div class="monitor-header" @pointerdown="startPanelDrag">性能监测</div>
 
     <div class="monitor-body">
-      <div class="monitor-note">关闭设置页后仍持续采样；可直接复现播放、滚动和切页卡顿。</div>
-
       <div class="metric-section">
         <div class="metric-title">FRAME</div>
         <div class="metric-grid">
@@ -300,12 +371,12 @@ onBeforeUnmount(() => {
 
 .performance-monitor {
   position: fixed;
-  right: 9.5%;
-  bottom: 22Px;
-  z-index: 1200;
+  right: 24Px;
+  bottom: 24Px;
+  z-index: var(--z-diagnostic, 1200);
   width: 430Px;
-  background: rgba(225, 240, 240, .96);
-  box-shadow: 0 0 0 .5Px rgba(0, 0, 0, .24), 0 8Px 24Px rgba(0, 0, 0, .08);
+  background: rgba(225, 240, 240, .78);
+  box-shadow: 0 0 0 .5Px rgba(0, 0, 0, .18), 0 6Px 20Px rgba(0, 0, 0, .06);
 
   .monitor-header {
     width: 100%;
@@ -314,15 +385,12 @@ onBeforeUnmount(() => {
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     color: black;
     font: 12Px SourceHanSansCN-Bold;
     text-align: left;
-
-    .monitor-state {
-      font: 10Px SourceHanSansCN-Bold;
-      color: rgba(0, 0, 0, .46);
-    }
+    cursor: move;
+    user-select: none;
+    touch-action: none;
   }
 
   .monitor-body {
@@ -331,13 +399,6 @@ onBeforeUnmount(() => {
     overflow: auto;
     text-align: left;
     &::-webkit-scrollbar { display: none; }
-  }
-
-  .monitor-note {
-    padding: 7Px 0 10Px;
-    border-top: .5Px solid rgba(0, 0, 0, .14);
-    font: 9Px SourceHanSansCN-Bold;
-    color: rgba(0, 0, 0, .48);
   }
 
   .metric-section {
