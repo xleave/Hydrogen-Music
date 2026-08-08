@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ startsWith(github.event.head_commit.message, 'ci: apply rustfmt once') }}
+    if: "${{ startsWith(github.event.head_commit.message, 'ci apply rustfmt once') }}"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
