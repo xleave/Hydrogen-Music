@@ -3,7 +3,6 @@ import { computed, ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { onBeforeRouteUpdate, useRouter } from 'vue-router'
-import { nanoid } from 'nanoid'
 import { songTime2, addLocalMusicTOList, setShuffledList } from '../utils/player'
 import { useLocalStore } from '../store/localStore'
 import { usePlayerStore } from '../store/playerStore'
@@ -35,13 +34,7 @@ function routerChange(operation) {
   else router.back()
 }
 
-const getData = computed(() => {
-  const songs = currentSelectedSongs.value || []
-  songs.forEach((item) => {
-    if (!item.nid) Object.assign(item, { nid: nanoid() })
-  })
-  return songs
-})
+const getData = computed(() => currentSelectedSongs.value || [])
 
 const songCount = computed(() => currentSelectedSongs.value?.length || 0)
 const filteredData = computed(() => {
@@ -85,9 +78,6 @@ function displayAlbum(item) {
 }
 
 function play(id) {
-  // The queue is created from the ordered view the user is actually looking
-  // at. Search results stay scoped to the current result set, and the next
-  // track after a sorted row is the next visible row.
   const visibleSongs = sortedData.value
   const visibleIndex = visibleSongs.findIndex((song) => song.id === id)
   if (visibleIndex < 0) return
@@ -162,7 +152,7 @@ function openMenu(event, item) {
           </label>
         </div>
 
-        <RecycleScroller class="virtual-list" :items="sortedData" :item-size="68" key-field="nid" v-slot="{ item, index }">
+        <RecycleScroller class="virtual-list" :items="sortedData" :item-size="68" key-field="id" v-slot="{ item, index }">
           <div class="list-item" :class="{ 'list-item-playing': songId === item.id }" @dblclick="play(item.id)" @contextmenu="openMenu($event, item)">
             <div class="item-title">
               <div class="item-state">
