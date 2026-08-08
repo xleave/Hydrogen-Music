@@ -24,6 +24,16 @@ let saveRevision = 0
 let savedRevision = 0
 let pendingSnapshot = null
 let saveLoop = null
+let structureRevision = 0
+let cachedStructureRevision = -1
+let cachedSongCount = -1
+let cachedShuffleCount = -1
+let cachedSongIdsJson = '[]'
+let cachedShuffledIdsJson = '[]'
+
+function markStructureChanged() {
+  structureRevision += 1
+}
 
 export function localMusicHandle(list, firstOnly = false) {
   const tracks = list.map((song) => ({
@@ -58,6 +68,7 @@ export function addToList(listType, tracks) {
   supersedePendingRestore()
   listInfo.value = { id: 'local', type: listType }
   songList.value = [...tracks]
+  markStructureChanged()
   savePlaylist()
 }
 
@@ -69,6 +80,7 @@ export function addLocalMusicTOList(listType, localTracks, playId, playIndex) {
 
 export function markPlaylistCleared() {
   supersedePendingRestore()
+  markStructureChanged()
   savePlaylist()
 }
 
@@ -84,6 +96,7 @@ export function setShuffledList(playAll = false) {
   }
   shuffledList.value = shuffled
   shuffleIndex.value = 0
+  markStructureChanged()
 }
 
 function activeList() { return playMode.value === 3 ? shuffledList.value : songList.value }
@@ -117,6 +130,7 @@ export function changePlayMode() {
   else {
     shuffledList.value = null
     shuffleIndex.value = 0
+    markStructureChanged()
   }
   windowApi.changeTrayMusicPlaymode(playMode.value)
   savePlaylist()
@@ -130,6 +144,7 @@ export function applyPlayMode(mode) {
   else {
     shuffledList.value = null
     shuffleIndex.value = 0
+    markStructureChanged()
   }
   savePlaylist()
 }
@@ -165,6 +180,7 @@ export function addToNext(nextSong, autoplay) {
     if (shuffledIndex >= 0) shuffledList.value.splice(shuffledIndex, 1)
     shuffledList.value.splice(shuffleIndex.value + 1, 0, nextSong)
   }
+  markStructureChanged()
   if (autoplay) playNext()
   else noticeOpen('已添加至下一首', 2)
   if (songList.value.length === 1) addSong(nextSong.id, 0, autoplay)
@@ -173,18 +189,32 @@ export function addToNext(nextSong, autoplay) {
 
 export function addToNextLocal(song, autoplay) { addToNext(localMusicHandle([song], true), autoplay) }
 
-function compactPlaylist() {
-  return {
-    version: 3,
-    songIds: (songList.value || []).map((track) => track.id),
-    shuffledSongIds: (shuffledList.value || []).map((track) => track.id),
-    currentSongId: songId.value,
-    currentIndex: currentIndex.value,
-    shuffleIndex: shuffleIndex.value,
-    progress: Number.isFinite(progress.value) ? Math.max(0, progress.value) : 0,
-    volume: Number.isFinite(volume.value) ? Math.max(0, Math.min(1, volume.value)) : 0.3,
-    playMode: Number.isInteger(playMode.value) ? Math.max(0, Math.min(3, playMode.value)) : 0,
-  }
+function refreshStructureCacheIfNeeded() {
+  const songs = songList.value || []
+  const shuffled = shuffledList.value || []
+  if (
+    cachedStructureRevision === structureRevision
+    && cachedSongCount === songs.length
+    && cachedShuffleCount === shuffled.length
+  ) return
+
+  cachedSongIdsJson = JSON.stringify(songs.map((track) => track.id))
+  cachedShuffledIdsJson = JSON.stringify(shuffled.map((track) => track.id))
+  cachedStructureRevision = structureRevision
+  cachedSongCount = songs.length
+  cachedShuffleCount = shuffled.length
+}
+
+function compactPlaylistJson() {
+  refreshStructureCacheIfNeeded()
+  const currentSongId = JSON.stringify(songId.value ?? null)
+  const currentIndexValue = Number.isInteger(currentIndex.value) ? Math.max(0, currentIndex.value) : 0
+  const shuffleIndexValue = Number.isInteger(shuffleIndex.value) ? Math.max(0, shuffleIndex.value) : 0
+  const progressValue = Number.isFinite(progress.value) ? Math.max(0, progress.value) : 0
+  const volumeValue = Number.isFinite(volume.value) ? Math.max(0, Math.min(1, volume.value)) : 0.3
+  const playModeValue = Number.isInteger(playMode.value) ? Math.max(0, Math.min(3, playMode.value)) : 0
+
+  return `{"version":3,"songIds":${cachedSongIdsJson},"shuffledSongIds":${cachedShuffledIdsJson},"currentSongId":${currentSongId},"currentIndex":${currentIndexValue},"shuffleIndex":${shuffleIndexValue},"progress":${progressValue},"volume":${volumeValue},"playMode":${playModeValue}}`
 }
 
 async function drainPlaylistSaves() {
@@ -208,7 +238,7 @@ function ensureSaveLoop() {
 
 export function savePlaylist() {
   if (!playlistHydrated) return Promise.resolve()
-  pendingSnapshot = JSON.stringify(compactPlaylist())
+  pendingSnapshot = compactPlaylistJson()
   saveRevision += 1
   return ensureSaveLoop()
 }
@@ -221,6 +251,7 @@ export async function loadLastSong() {
   } else {
     songList.value = []
     playlistHydrated = true
+    markStructureChanged()
   }
   restorePlaylistFromLibrary(localStore.localMusicList)
 }
@@ -248,6 +279,7 @@ export function restorePlaylistFromLibrary(library) {
   playlistHydrated = true
   songList.value = restored
   shuffledList.value = shuffledSongIds.map((id) => byId.get(id)).filter(Boolean)
+  markStructureChanged()
   const fallbackIndex = Math.max(0, Math.min(Number(saved.currentIndex) || 0, restored.length - 1))
   const selectedId = saved.currentSongId || restored[fallbackIndex].id
   const savedIndex = restored.findIndex((track) => track.id === selectedId || track.url === selectedId)
