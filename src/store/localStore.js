@@ -5,11 +5,12 @@ function asRaw(value) {
     return value == null ? value : markRaw(value)
 }
 
-// Library metadata is immutable between scans. Build navigation indexes once
-// when a snapshot arrives so clicking a folder/album/artist never has to walk
-// or flatten the entire library on the renderer's interaction frame.
+// Library metadata is immutable between scans. Navigation indexes are kept
+// outside Pinia so the large metadata graph never enters Vue deep reactivity.
 let folderById = new Map()
-let folderSongsById = new Map()
+let folderRangeById = new Map()
+let folderSongsByRange = new WeakMap()
+let flattenedSongs = []
 let albumById = new Map()
 let artistById = new Map()
 
@@ -18,37 +19,47 @@ function addFolderAlias(map, key, value) {
 }
 
 function indexFolderTree(nodes) {
-    const collected = []
     for (const item of nodes || []) {
         if (Array.isArray(item.children)) {
-            const songs = indexFolderTree(item.children)
-            const rawSongs = asRaw(songs)
+            const start = flattenedSongs.length
+            indexFolderTree(item.children)
+            const range = { start, end: flattenedSongs.length }
             const primaryId = item.id || item.dirPath || item.name
             addFolderAlias(folderById, primaryId, item)
             addFolderAlias(folderById, item.dirPath, item)
             // Name is retained only as a legacy route alias and never replaces
             // a stable id/path mapping when duplicate folder names exist.
             addFolderAlias(folderById, item.name, item)
-            addFolderAlias(folderSongsById, primaryId, rawSongs)
-            addFolderAlias(folderSongsById, item.dirPath, rawSongs)
-            addFolderAlias(folderSongsById, item.name, rawSongs)
-            collected.push(...songs)
+            addFolderAlias(folderRangeById, primaryId, range)
+            addFolderAlias(folderRangeById, item.dirPath, range)
+            addFolderAlias(folderRangeById, item.name, range)
         } else {
-            collected.push(item)
+            flattenedSongs.push(item)
         }
     }
-    return collected
 }
 
 function rebuildLibraryIndexes(filesMetadata, classifyData) {
     folderById = new Map()
-    folderSongsById = new Map()
+    folderRangeById = new Map()
+    folderSongsByRange = new WeakMap()
+    flattenedSongs = []
     albumById = new Map()
     artistById = new Map()
 
     indexFolderTree(filesMetadata)
     for (const album of classifyData?.albums || []) albumById.set(album.id, album)
     for (const artist of classifyData?.artists || []) artistById.set(artist.id, artist)
+}
+
+function songsForRange(range) {
+    if (!range) return null
+    let songs = folderSongsByRange.get(range)
+    if (!songs) {
+        songs = asRaw(flattenedSongs.slice(range.start, range.end))
+        folderSongsByRange.set(range, songs)
+    }
+    return songs
 }
 
 export const useLocalStore = defineStore('localStore', {
@@ -90,7 +101,7 @@ export const useLocalStore = defineStore('localStore', {
         },
         getFolderSongs(arr, folderId) {
             const item = folderById.get(folderId)
-            const songs = folderSongsById.get(folderId)
+            const songs = songsForRange(folderRangeById.get(folderId))
             if (item && songs) {
                 this.currentSelectedInfo = {
                     id: item.id || item.dirPath,
