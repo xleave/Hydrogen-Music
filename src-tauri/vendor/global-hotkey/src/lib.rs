@@ -1,6 +1,6 @@
 pub use wayclip_global_hotkey::{hotkey, GlobalHotKeyEvent, HotKeyState};
 
-use std::fmt;
+use std::{fmt, sync::Mutex};
 use wayclip_global_hotkey::{hotkey::HotKey, GlobalHotKeyManager as InnerManager};
 
 #[derive(Debug, Clone)]
@@ -28,16 +28,22 @@ impl From<wayclip_global_hotkey::Error> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// API-compatible manager used by tauri-plugin-global-shortcut.
-///
-/// Wayclip selects X11 or the XDG GlobalShortcuts portal at runtime. Backend
-/// initialization is deliberately non-fatal: a session without a compatible
-/// portal must still be able to start Hydrogen Music. Registration then returns
-/// the original backend error so the settings UI can report that global
-/// shortcuts are unavailable instead of pretending they were enabled.
-pub struct GlobalHotKeyManager {
+#[derive(Default)]
+struct BackendState {
     inner: Option<InnerManager>,
     init_error: Option<String>,
+}
+
+/// API-compatible manager used by tauri-plugin-global-shortcut.
+///
+/// The important lifecycle rule is that constructing the Tauri plugin must not
+/// touch the XDG GlobalShortcuts portal. On some Wayland sessions portal setup
+/// can block while the WebView is still starting, which leaves a visible but
+/// completely white application window. The actual backend is therefore
+/// created only when the renderer asks to register a global shortcut, after the
+/// Vue application has already mounted.
+pub struct GlobalHotKeyManager {
+    state: Mutex<BackendState>,
 }
 
 impl GlobalHotKeyManager {
@@ -45,48 +51,79 @@ impl GlobalHotKeyManager {
         if std::env::var_os("GLOBAL_HOTKEY_APP_ID").is_none() {
             std::env::set_var("GLOBAL_HOTKEY_APP_ID", "music.hydrogen.local");
         }
-        match InnerManager::new() {
-            Ok(inner) => Ok(Self {
-                inner: Some(inner),
-                init_error: None,
-            }),
-            Err(error) => {
-                let detail = format!("global shortcut backend unavailable: {error}");
-                eprintln!("[global shortcut] {detail}");
-                Ok(Self {
-                    inner: None,
-                    init_error: Some(detail),
-                })
-            }
-        }
-    }
-
-    fn inner(&self) -> Result<&InnerManager> {
-        self.inner.as_ref().ok_or_else(|| {
-            Error::unavailable(
-                self.init_error
-                    .clone()
-                    .unwrap_or_else(|| "global shortcut backend unavailable".to_string()),
-            )
+        Ok(Self {
+            state: Mutex::new(BackendState::default()),
         })
     }
 
+    fn with_inner<T>(
+        &self,
+        operation: impl FnOnce(&InnerManager) -> std::result::Result<T, wayclip_global_hotkey::Error>,
+    ) -> Result<T> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::unavailable("global shortcut backend lock was poisoned"))?;
+
+        if state.inner.is_none() {
+            match InnerManager::new() {
+                Ok(inner) => {
+                    state.inner = Some(inner);
+                    state.init_error = None;
+                }
+                Err(error) => {
+                    let detail = format!("global shortcut backend unavailable: {error}");
+                    state.init_error = Some(detail.clone());
+                    eprintln!("[global shortcut] {detail}");
+                    return Err(Error::unavailable(detail));
+                }
+            }
+        }
+
+        let inner = state.inner.as_ref().ok_or_else(|| {
+            Error::unavailable(
+                state
+                    .init_error
+                    .clone()
+                    .unwrap_or_else(|| "global shortcut backend unavailable".to_string()),
+            )
+        })?;
+        operation(inner).map_err(Into::into)
+    }
+
     pub fn register(&self, hotkey: HotKey) -> Result<()> {
-        self.inner()?.register(hotkey).map_err(Into::into)
+        self.with_inner(|inner| inner.register(hotkey))
     }
 
     pub fn unregister(&self, hotkey: HotKey) -> Result<()> {
-        self.inner()?.unregister(hotkey).map_err(Into::into)
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::unavailable("global shortcut backend lock was poisoned"))?;
+        let Some(inner) = state.inner.as_ref() else {
+            return Ok(());
+        };
+        inner.unregister(hotkey).map_err(Into::into)
     }
 
     pub fn register_all(&self, hotkeys: &[HotKey]) -> Result<()> {
-        self.inner()?.register_all(hotkeys).map_err(Into::into)
+        if hotkeys.is_empty() {
+            return Ok(());
+        }
+        self.with_inner(|inner| inner.register_all(hotkeys))
     }
 
     pub fn unregister_all(&self, hotkeys: &[HotKey]) -> Result<()> {
-        if hotkeys.is_empty() && self.inner.is_none() {
+        if hotkeys.is_empty() {
             return Ok(());
         }
-        self.inner()?.unregister_all(hotkeys).map_err(Into::into)
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::unavailable("global shortcut backend lock was poisoned"))?;
+        let Some(inner) = state.inner.as_ref() else {
+            return Ok(());
+        };
+        inner.unregister_all(hotkeys).map_err(Into::into)
     }
 }
