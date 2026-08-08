@@ -1,8 +1,14 @@
 <script setup>
-import { computed, onActivated, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { dialogOpen } from '../utils/dialog'
-import { initSettings } from '../utils/initApp'
+import {
+  flushSettings,
+  initSettings,
+  resetSettingsPersistence,
+  scheduleSettingsSave,
+  settingsSaveState,
+} from '../utils/initApp'
 import { usePlayerStore } from '../store/playerStore'
 import { insertCustomFontStyle } from '../utils/setFont'
 import Selector from '../components/Selector.vue'
@@ -29,8 +35,7 @@ const customFont = ref('')
 const fontOptions = ref([{ label: '使用应用默认字体', value: '' }])
 const fontLoading = ref(false)
 const hydrating = ref(true)
-const saveState = ref('saved')
-let saveTimer = null
+const saveState = settingsSaveState
 
 const saveStateLabel = computed(() => ({
   saved: '已自动保存',
@@ -62,29 +67,18 @@ function buildSettings() {
   }
 }
 
-async function persistSettings(force = false) {
-  if (hydrating.value) return
-  if (saveTimer) {
-    clearTimeout(saveTimer)
-    saveTimer = null
-  }
-  if (!force && saveState.value === 'saved') return
-
-  saveState.value = 'saving'
-  try {
-    await windowApi.setSettings(JSON.stringify(buildSettings()))
-    saveState.value = 'saved'
-  } catch (error) {
-    console.error('[settings.save]', error)
-    saveState.value = 'failed'
-  }
-}
-
 function scheduleSave() {
   if (hydrating.value) return
-  saveState.value = 'saving'
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => persistSettings(true), 650)
+  scheduleSettingsSave(buildSettings())
+}
+
+async function applyShortcuts() {
+  if (hydrating.value || selectedShortcut.value) return
+  try {
+    await windowApi.registerShortcuts(shortcutsList.value, globalShortcuts.value)
+  } catch (error) {
+    console.error('[shortcuts.register]', error)
+  }
 }
 
 async function loadSystemFonts() {
@@ -109,6 +103,7 @@ function ensureCurrentFontOption() {
 
 async function hydrateSettings() {
   hydrating.value = true
+  resetSettingsPersistence()
   const [settings] = await Promise.all([
     windowApi.getSettings(),
     loadSystemFonts(),
@@ -126,8 +121,8 @@ async function hydrateSettings() {
   }
   ensureCurrentFontOption()
   insertCustomFontStyle(customFont.value)
-  saveState.value = 'saved'
   hydrating.value = false
+  await applyShortcuts()
 }
 
 onActivated(hydrateSettings)
@@ -143,13 +138,19 @@ watch(customFont, (value) => {
   scheduleSave()
 })
 
-onBeforeRouteLeave(async () => {
-  if (saveState.value !== 'saved') await persistSettings(true)
-  initSettings()
+watch(
+  [shortcutsList, globalShortcuts],
+  () => applyShortcuts(),
+  { deep: true },
+)
+
+watch(selectedShortcut, (value, previous) => {
+  if (!value && previous) applyShortcuts()
 })
 
-onBeforeUnmount(() => {
-  if (saveTimer) clearTimeout(saveTimer)
+onBeforeRouteLeave(async () => {
+  await flushSettings().catch((error) => console.error('[settings.flush]', error))
+  await initSettings()
 })
 
 function routerChange() {
@@ -183,7 +184,7 @@ function formatShortcutName(name = '') {
 
 function changeShortcut(id, type) {
   selectedShortcut.value = { id, type }
-  windowApi.unregisterShortcuts()
+  windowApi.unregisterShortcuts().catch((error) => console.error('[shortcuts.unregister]', error))
 }
 
 function updateShortcut() {
@@ -204,6 +205,8 @@ function updateShortcut() {
 
 function inputShortcut(event) {
   if (!selectedShortcut.value) return
+  event.preventDefault()
+  event.stopPropagation()
   if (newShortcut.value.find((key) => key.keyCode === event.keyCode)) return
   newShortcut.value.push(event)
   const isComplete = (event.keyCode >= 65 && event.keyCode <= 90)
@@ -220,6 +223,7 @@ function inputShortcut(event) {
     else target.shortcut = updateShortcut()
   }
   newShortcut.value = []
+  selectedShortcut.value = null
 }
 
 function setDefaultShortcuts() {
