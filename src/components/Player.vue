@@ -41,7 +41,7 @@
                     <span class="time-end">{{songTime2(time)}}</span>
                 </div>
                 <div class="process">
-                    <vue-slider id="widget-progress" class="music-progress" @click="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
+                    <vue-slider data-player-progress class="music-progress" @click="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
                 </div>
             </div>
 
@@ -343,7 +343,6 @@
           }
         }
         .control{
-          // margin: 2vh 0;
           display: flex;
           flex-direction: row;
           justify-content: space-evenly;
