@@ -1,4 +1,9 @@
+import { markRaw } from 'vue'
 import { defineStore } from "pinia";
+
+function asRaw(value) {
+    return value == null ? value : markRaw(value)
+}
 
 export const useLocalStore = defineStore('localStore', {
     state: () => {
@@ -21,11 +26,17 @@ export const useLocalStore = defineStore('localStore', {
         }
     },
     actions: {
-        getSongs(arr) {
+        setLibraryData(dirTree, filesMetadata, classifyData) {
+            this.localDirectoryTree = asRaw(dirTree)
+            this.localMusicList = asRaw(filesMetadata)
+            this.localMusicClassify = asRaw(classifyData)
+        },
+        getSongs(arr, target = []) {
             for (const song of arr || []) {
-                if (song.children) this.getSongs(song.children)
-                else this.currentSelectedSongs.push(song)
+                if (song.children) this.getSongs(song.children, target)
+                else target.push(song)
             }
+            return target
         },
         getFolderSongs(arr, folderId) {
             for (const item of arr || []) {
@@ -35,8 +46,7 @@ export const useLocalStore = defineStore('localStore', {
                     name: item.name,
                     dirPath: item.dirPath
                 }
-                this.currentSelectedSongs = []
-                this.getSongs(item.children)
+                this.currentSelectedSongs = asRaw(this.getSongs(item.children, []))
                 return true
               }
               if(item.children && this.getFolderSongs(item.children, folderId)) return true
@@ -63,7 +73,7 @@ export const useLocalStore = defineStore('localStore', {
                     name: album.name,
                     albumArtist: album.albumArtist,
                 }
-                this.currentSelectedSongs = album.songs
+                this.currentSelectedSongs = asRaw(album.songs)
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
@@ -77,7 +87,7 @@ export const useLocalStore = defineStore('localStore', {
                     id: artist.id,
                     name: artist.name
                 }
-                this.currentSelectedSongs = artist.songs
+                this.currentSelectedSongs = asRaw(artist.songs)
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
