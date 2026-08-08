@@ -11,7 +11,7 @@ export const usePlayerStore = defineStore('playerStore', {
             // volumeBeforeMuted: 0,//静音前音量
             playMode: 0,//0为顺序播放，1为列表循环，2为单曲循环，3为随机播放
             listInfo: null,
-            songList: null,//播放列表
+            songList: null,//播放列表；null=尚未hydrate，[]=已hydrate但为空
             shuffledList: null,//随机播放列表
             shuffleIndex: 0,//随机播放列表的索引
             songId: null,
@@ -35,6 +35,9 @@ export const usePlayerStore = defineStore('playerStore', {
             lyricBlur: false,
             coverUrl: null,
         }
+    },
+    getters: {
+        hasPlaylist: (state) => Array.isArray(state.songList) && state.songList.length > 0,
     },
     actions: {
     },
