@@ -25,3 +25,32 @@ body {
 #app {
   text-align: center;
 }
+
+/* Settings polish. Keep these global because Settings.vue uses scoped styles. */
+.settings-page .view-control .router-last {
+  margin-right: 10px !important;
+}
+
+.settings-page .view-control .save-status {
+  margin-left: 20px !important;
+  padding-left: 14px !important;
+}
+
+.settings-page .default-shortcuts {
+  width: 132px !important;
+  box-sizing: border-box !important;
+  border: 1px solid rgba(0, 0, 0, .68) !important;
+}
+
+.settings-page .default-shortcuts:hover {
+  box-shadow: none !important;
+  background-color: rgba(255, 255, 255, .48) !important;
+}
+
+.settings-page .font-preview {
+  display: none !important;
+}
+
+.settings-page .font-control {
+  gap: 0 !important;
+}
