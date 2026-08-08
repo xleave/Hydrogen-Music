@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import { playerRefs, otherStore } from './state'
 import { flushSettings } from '../initApp'
 import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, registerPlaybackCheckpointHandler, startMusic, stopMusic, stopProgress } from './playback'
@@ -29,7 +30,6 @@ function handleSystemMediaControl(command) {
     case 'seekBy': changeProgress(Math.max(0, Math.min(currentMusic.value?.duration() || 0, progress.value + command.value))); break
     case 'volume':
       volume.value = Math.max(0, Math.min(1, command.value))
-      currentMusic.value?.volume(volume.value)
       savePlaylist().catch((error) => console.error('[playlist checkpoint after volume]', error))
       break
   }
@@ -44,8 +44,16 @@ export function initializePlayerLifecycle() {
     savePlaylist().catch((error) => console.error('[playlist checkpoint]', error))
   }, 10_000)
 
+  // Native/system volume synchronization belongs to the playback lifecycle,
+  // not to whichever player surface happens to be mounted or visible.
+  const stopVolumeWatch = watch(volume, (value) => {
+    const normalized = Math.max(0, Math.min(1, Number(value) || 0))
+    if (currentMusic.value) currentMusic.value.volume(normalized)
+    else windowApi.setSystemMediaVolume(normalized).catch((error) => console.error('[media.volume]', error))
+  }, { flush: 'sync' })
+
   const onMouseDown = (event) => {
-    if (event.target instanceof Element && event.target.closest('#widget-progress')) {
+    if (event.target instanceof Element && event.target.closest('[data-player-progress]')) {
       changeProgressByDragStart()
       draggingProgress = true
     }
@@ -67,6 +75,7 @@ export function initializePlayerLifecycle() {
   window.addEventListener('mouseup', onMouseUp)
   window.addEventListener('click', onClick)
   disposers.push(
+    stopVolumeWatch,
     () => window.removeEventListener('mousedown', onMouseDown),
     () => window.removeEventListener('mouseup', onMouseUp),
     () => window.removeEventListener('click', onClick),
@@ -76,12 +85,10 @@ export function initializePlayerLifecycle() {
     windowApi.systemMediaControl((event, command) => handleSystemMediaControl(command)),
     windowApi.volumeUp(() => {
       volume.value = Math.min(1, volume.value + 0.1)
-      currentMusic.value?.volume(volume.value)
       savePlaylist().catch((error) => console.error('[playlist checkpoint after volume]', error))
     }),
     windowApi.volumeDown(() => {
       volume.value = Math.max(0, volume.value - 0.1)
-      currentMusic.value?.volume(volume.value)
       savePlaylist().catch((error) => console.error('[playlist checkpoint after volume]', error))
     }),
     windowApi.musicProcessControl((event, mode) => {
