@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import pinia from '../store/pinia'
-import { loadLastSong } from './player'
+import { loadLastSong } from './player/playlist'
 import { scanMusic } from './locaMusic'
 import { usePlayerStore } from '../store/playerStore'
 import { useLocalStore } from '../store/localStore'
