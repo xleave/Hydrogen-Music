@@ -1,0 +1,31 @@
+name: One-shot rustfmt
+
+on:
+  push:
+    branches:
+      - agent/rust-local-player
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/rust-local-player
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply exact rustfmt and remove this workflow
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          rm .github/workflows/one-shot-rustfmt.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src/lib.rs src-tauri/src/media.rs .github/workflows/one-shot-rustfmt.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "style: apply rustfmt to MPRIS artwork changes"
+          git push origin HEAD:agent/rust-local-player
