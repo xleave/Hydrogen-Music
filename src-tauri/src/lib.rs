@@ -383,7 +383,10 @@ async fn select_local_folder(
 }
 
 #[tauri::command]
-async fn get_cached_library(settings: State<'_, SettingsState>) -> Result<Option<Value>, String> {
+async fn get_cached_library(
+    app: AppHandle,
+    settings: State<'_, SettingsState>,
+) -> Result<Option<Value>, String> {
     let stored = settings
         .0
         .read()
@@ -393,13 +396,18 @@ async fn get_cached_library(settings: State<'_, SettingsState>) -> Result<Option
     if folders.len() != stored.len() {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || library_snapshot::load(&folders))
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || library_snapshot::load(&cache_directory, &folders))
         .await
         .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 async fn scan_local_music(
+    app: AppHandle,
     settings: State<'_, SettingsState>,
     scan: State<'_, ScanState>,
 ) -> Result<library::ScanResult, String> {
@@ -414,9 +422,14 @@ async fn scan_local_music(
     // Native ownership prevents a WebView reload from resetting the generation
     // below the long-lived Rust process state.
     let request_id = latest.fetch_add(1, Ordering::AcqRel) + 1;
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = library::scan(&folders, request_id, &latest, roots_complete)?;
-        if let Err(error) = library_snapshot::save(&folders, &result) {
+        let index_path = cache_directory.join("library-index.sqlite3");
+        let result = library::scan(&folders, request_id, &latest, roots_complete, &index_path)?;
+        if let Err(error) = library_snapshot::save(&cache_directory, &folders, &result) {
             eprintln!("[library snapshot] failed to persist cache: {error}");
         }
         Ok(result)
