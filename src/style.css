@@ -18,8 +18,8 @@
   --z-settings: 900;
   --z-chrome: 1000;
   --z-notice: 1100;
-  --z-popover: 1300;
   --z-diagnostic: 1500;
+  --z-popover: 1600;
   --z-modal: 2000;
 }
 
