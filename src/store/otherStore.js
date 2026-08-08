@@ -14,6 +14,6 @@ export const useOtherStore = defineStore('otherStore', {
     dialogText: null,
     noticeShow: false,
     noticeText: null,
-    niticeOutAnimation: false,
+    noticeOutAnimation: false,
   }),
 })

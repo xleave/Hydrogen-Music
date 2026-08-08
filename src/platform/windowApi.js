@@ -1,65 +1,276 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
-import { open } from '@tauri-apps/plugin-dialog'
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 const callbacks = new Map()
+let scanRequestId = 0
+let exiting = false
+let localShortcuts = []
+let localShortcutListenerInstalled = false
+let performanceMonitoring = false
+let performanceStartedAt = 0
+let performanceTotalCalls = 0
+let performanceActiveCalls = 0
+let performanceMaxActiveCalls = 0
+let performanceByCommand = new Map()
+let performanceRecent = []
+
+function nowMs() {
+  return globalThis.performance?.now?.() ?? Date.now()
+}
+
+function resetPerformanceMetrics() {
+  performanceStartedAt = nowMs()
+  performanceTotalCalls = 0
+  performanceActiveCalls = 0
+  performanceMaxActiveCalls = 0
+  performanceByCommand = new Map()
+  performanceRecent = []
+}
+
+function setPerformanceMonitoring(enabled) {
+  performanceMonitoring = Boolean(enabled)
+  resetPerformanceMetrics()
+}
+
+function getPerformanceMetrics() {
+  const byCommand = {}
+  for (const [command, stats] of performanceByCommand.entries()) {
+    byCommand[command] = { ...stats }
+  }
+  return {
+    elapsedMs: Math.max(0, nowMs() - performanceStartedAt),
+    totalCalls: performanceTotalCalls,
+    activeCalls: performanceActiveCalls,
+    maxActiveCalls: performanceMaxActiveCalls,
+    byCommand,
+    recent: performanceRecent.map((item) => ({ ...item })),
+  }
+}
+
+async function invoke(command, args) {
+  if (!performanceMonitoring) return tauriInvoke(command, args)
+
+  const startedAt = nowMs()
+  performanceTotalCalls += 1
+  performanceActiveCalls += 1
+  performanceMaxActiveCalls = Math.max(performanceMaxActiveCalls, performanceActiveCalls)
+
+  const commandStats = performanceByCommand.get(command) || {
+    calls: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    lastDurationMs: 0,
+  }
+  commandStats.calls += 1
+  performanceByCommand.set(command, commandStats)
+
+  try {
+    return await tauriInvoke(command, args)
+  } finally {
+    const durationMs = Math.max(0, nowMs() - startedAt)
+    performanceActiveCalls = Math.max(0, performanceActiveCalls - 1)
+    commandStats.totalDurationMs += durationMs
+    commandStats.maxDurationMs = Math.max(commandStats.maxDurationMs, durationMs)
+    commandStats.lastDurationMs = durationMs
+    performanceRecent.push({ command, durationMs, finishedAt: Date.now() })
+    if (performanceRecent.length > 24) performanceRecent.splice(0, performanceRecent.length - 24)
+  }
+}
 
 function subscribe(name, callback) {
-  callbacks.set(name, callback)
+  if (!callbacks.has(name)) callbacks.set(name, new Set())
+  callbacks.get(name).add(callback)
+  return () => callbacks.get(name)?.delete(callback)
 }
 
 function emit(name, ...args) {
-  callbacks.get(name)?.({}, ...args)
+  const results = []
+  for (const callback of callbacks.get(name) || []) results.push(callback({}, ...args))
+  return results
 }
 
-async function scanLocalMusic(params) {
-  const settings = await invoke('get_settings')
-  const folders = settings.local.localFolder
-  const result = await invoke('scan_local_music', { folders })
-  emit('localMusicCount', result.count)
-  emit('localMusicFiles', { ...result, type: params.type })
+function dispatchShortcut(action) {
+  switch (action) {
+    case 'play': emit('playOrPauseMusic'); break
+    case 'last': emit('lastOrNextMusic', 'last'); break
+    case 'next': emit('lastOrNextMusic', 'next'); break
+    case 'volumeUp': emit('volumeUp'); break
+    case 'volumeDown': emit('volumeDown'); break
+    case 'processForward': emit('musicProcessControl', 'forward'); break
+    case 'processBack': emit('musicProcessControl', 'back'); break
+  }
+}
+
+function shouldIgnoreLocalShortcut(event) {
+  const target = event.target
+  if (!(target instanceof Element)) return false
+  if (target.closest('input, textarea, select, [contenteditable="true"]')) return true
+  return false
+}
+
+function normalizeShortcutKey(event) {
+  if (event.key === ' ') return 'Space'
+  if (event.key?.startsWith('Arrow')) return event.key.slice(5)
+  if (/^F\d{1,2}$/i.test(event.key || '')) return event.key.toUpperCase()
+  if (/^Numpad\d$/.test(event.code || '')) return `num${event.code.slice(-1)}`
+  if (/^Key[A-Z]$/.test(event.code || '')) return event.code.slice(3)
+  if (/^Digit\d$/.test(event.code || '')) return event.code.slice(5)
+  return event.key?.length === 1 ? event.key : event.key
+}
+
+function shortcutMatches(event, shortcut) {
+  const tokens = String(shortcut || '').split('+').map((token) => token.trim()).filter(Boolean)
+  if (!tokens.length) return false
+
+  let needsCtrl = false
+  let needsMetaOrCtrl = false
+  let needsShift = false
+  let needsAlt = false
+  let expectedKey = null
+
+  for (const token of tokens) {
+    if (token === 'CommandOrControl') needsMetaOrCtrl = true
+    else if (token === 'Control' || token === 'Ctrl') needsCtrl = true
+    else if (token === 'Shift') needsShift = true
+    else if (token === 'Alt' || token === 'Option') needsAlt = true
+    else expectedKey = token
+  }
+
+  if (needsMetaOrCtrl ? !(event.ctrlKey || event.metaKey) : (event.ctrlKey || event.metaKey) && !needsCtrl) return false
+  if (needsCtrl && !event.ctrlKey) return false
+  if (needsShift !== event.shiftKey) return false
+  if (needsAlt !== event.altKey) return false
+  if (!expectedKey) return false
+
+  const actualKey = normalizeShortcutKey(event)
+  return String(actualKey).toLocaleLowerCase() === String(expectedKey).toLocaleLowerCase()
+}
+
+function handleLocalShortcut(event) {
+  if (event.repeat || shouldIgnoreLocalShortcut(event)) return
+  for (const binding of localShortcuts) {
+    if (!shortcutMatches(event, binding.shortcut)) continue
+    event.preventDefault()
+    event.stopPropagation()
+    dispatchShortcut(binding.id)
+    return
+  }
+}
+
+function setLocalShortcuts(shortcuts) {
+  localShortcuts = (shortcuts || [])
+    .filter((item) => item?.id && item?.shortcut)
+    .map((item) => ({ id: item.id, shortcut: item.shortcut }))
+  if (!localShortcutListenerInstalled) {
+    window.addEventListener('keydown', handleLocalShortcut, true)
+    localShortcutListenerInstalled = true
+  }
+}
+
+function clearLocalShortcuts() {
+  localShortcuts = []
+  if (localShortcutListenerInstalled) {
+    window.removeEventListener('keydown', handleLocalShortcut, true)
+    localShortcutListenerInstalled = false
+  }
+}
+
+async function registerShortcuts(shortcuts = [], globalEnabled = false) {
+  setLocalShortcuts(shortcuts)
+  const globalBindings = globalEnabled
+    ? shortcuts
+      .filter((item) => item?.id && item?.globalShortcut)
+      .map((item) => ({ id: item.id, shortcut: item.globalShortcut }))
+    : []
+  return invoke('register_shortcuts', { shortcuts: globalBindings })
+}
+
+async function unregisterShortcuts() {
+  clearLocalShortcuts()
+  return invoke('unregister_shortcuts')
+}
+
+async function runExitFlush(playlist) {
+  if (exiting) return
+  exiting = true
+  try {
+    if (playlist !== undefined) await invoke('save_last_playlist', { playlist })
+    const pending = emit('beforeQuit')
+    await Promise.allSettled(pending.map((value) => Promise.resolve(value)))
+    await invoke('quit_app')
+  } catch (error) {
+    exiting = false
+    throw error
+  }
+}
+
+async function getCachedLibrary(params = {}) {
+  const result = await invoke('get_cached_library')
+  if (!result) return null
+  emit('localMusicFiles', { ...result, type: params.type, cached: true })
+  return result
+}
+
+async function scanLocalMusic(params = {}) {
+  const requestId = ++scanRequestId
+  try {
+    const result = await invoke('scan_local_music')
+    if (requestId !== scanRequestId) return null
+    emit('localMusicCount', result.count)
+    emit('localMusicFiles', { ...result, type: params.type, cached: false })
+    return result
+  } catch (error) {
+    if (requestId !== scanRequestId || String(error).includes('stale music scan')) return null
+    throw error
+  }
 }
 
 const noop = () => {}
 
 export function installWindowApi() {
   const appWindow = getCurrentWindow()
-
-  // 监听 Rust 发来的 tray-hide 事件：隐藏到托盘前只保存播放列表，不退出
-  listen('tray-hide', () => {
-    emit('beforeTrayHide')
+  const trayListener = listen('tray-hide', () => emit('beforeTrayHide'))
+  const mediaListener = listen('media-control', (event) => emit('systemMediaControl', event.payload))
+  const shortcutListener = listen('shortcut-action', (event) => dispatchShortcut(event.payload))
+  const exitListener = listen('app-exit-requested', () => {
+    runExitFlush().catch((error) => console.error('[exit flush]', error))
   })
 
   window.windowApi = {
     windowMin: () => appWindow.minimize(),
     windowMax: async () => (await appWindow.isMaximized()) ? appWindow.unmaximize() : appWindow.maximize(),
-    // 直接关闭窗口：Rust on_window_event 会根据 quitApp 设置决定隐藏到托盘还是退出
     windowClose: () => appWindow.close(),
-    toRegister: (url) => openUrl(url),
-    // beforeQuit 事件由 tray-hide 触发，用于在驻留托盘前保存播放列表
+    toRegister: () => invoke('open_project_page'),
     beforeQuit: (callback) => subscribe('beforeQuit', callback),
-    // beforeTrayHide：仅保存播放列表，不退出（托盘隐藏时触发）
     beforeTrayHide: (callback) => subscribe('beforeTrayHide', callback),
-    // exitApp：保存播放列表后调用 quit_app 命令强制退出（绕过 quitApp 设置）
-    exitApp: async (playlist) => {
-      await invoke('save_last_playlist', { playlist })
-      await invoke('quit_app')
-    },
+    exitApp: (playlist) => runExitFlush(playlist),
+    getCachedLibrary,
     scanLocalMusic,
     localMusicFiles: (callback) => subscribe('localMusicFiles', callback),
     localMusicCount: (callback) => subscribe('localMusicCount', callback),
     getLocalMusicImage: (filePath) => invoke('read_cover', { filePath }),
     getLocalMusicLyric: (filePath) => invoke('read_lyrics', { filePath }),
+    audioLoad: (filePath, autoplay, volume) => invoke('audio_load', { filePath, autoplay, volume }),
+    audioPlay: () => invoke('audio_play'),
+    audioPause: () => invoke('audio_pause'),
+    audioSeek: (position) => invoke('audio_seek', { position }),
+    audioSetVolume: (volume) => invoke('audio_set_volume', { volume }),
+    audioStatus: () => invoke('audio_status'),
+    audioStop: () => invoke('audio_stop'),
+    setSystemMediaMetadata: (metadata) => invoke('media_set_metadata', metadata),
+    setSystemMediaVolume: (volume) => invoke('media_set_volume', { volume }),
+    setSystemMediaStopped: () => invoke('media_set_stopped'),
+    clearSystemMedia: () => invoke('media_clear'),
+    systemMediaControl: (callback) => subscribe('systemMediaControl', callback),
     setSettings: (settings) => invoke('set_settings', { settings }),
     getSettings: () => invoke('get_settings'),
-    openFile: () => open({ directory: true, multiple: false }),
-    selectFile: () => open({ directory: false, multiple: false }),
-    openLocalFolder: (path) => revealItemInDir(path),
+    listSystemFonts: () => invoke('list_system_fonts'),
+    openFile: () => invoke('select_local_folder'),
+    openLocalFolder: (filePath) => invoke('reveal_music_file', { filePath }),
     saveLastPlaylist: (playlist) => invoke('save_last_playlist', { playlist }),
     getLastPlaylist: () => invoke('get_last_playlist'),
-    setWindowTile: (title) => appWindow.setTitle(title),
+    reportFrontendError: (source, detail) => invoke('report_frontend_error', { source, detail }),
     copyTxt: (txt) => navigator.clipboard.writeText(txt),
     playOrPauseMusic: (callback) => subscribe('playOrPauseMusic', callback),
     lastOrNextMusic: (callback) => subscribe('lastOrNextMusic', callback),
@@ -69,9 +280,20 @@ export function installWindowApi() {
     musicProcessControl: (callback) => subscribe('musicProcessControl', callback),
     hidePlayer: (callback) => subscribe('hidePlayer', callback),
     lyricControl: (callback) => subscribe('lyricControl', callback),
-    playOrPauseMusicCheck: noop,
+    playOrPauseMusicCheck: (playing) => invoke('media_set_playback', { playing }),
     changeTrayMusicPlaymode: noop,
-    registerShortcuts: noop,
-    unregisterShortcuts: noop,
+    registerShortcuts,
+    unregisterShortcuts,
+    setPerformanceMonitoring,
+    getPerformanceMetrics,
+  }
+
+  return async () => {
+    setPerformanceMonitoring(false)
+    clearLocalShortcuts()
+    callbacks.clear()
+    await invoke('unregister_shortcuts').catch(() => {})
+    const unlisteners = await Promise.all([trayListener, mediaListener, shortcutListener, exitListener])
+    unlisteners.forEach((unlisten) => unlisten())
   }
 }

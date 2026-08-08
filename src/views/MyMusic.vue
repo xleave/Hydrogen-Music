@@ -11,16 +11,16 @@
   const { libraryChangeAnimation } = storeToRefs(libraryStore)
   const playerStore = usePlayerStore()
   const localStore = useLocalStore()
-  const { localMusicFolder, localMusicClassify, localFolderSettings } = storeToRefs(localStore)
+  const { localDirectoryTree, localMusicClassify, localFolderSettings } = storeToRefs(localStore)
 
 </script>
 
 <template>
-  <div class="my-music" :class="{'my-music-full': !playerStore.songList}">
+  <div class="my-music" :class="{'my-music-full': !playerStore.hasPlaylist}">
     <div class="music-library">
       <LibraryType class="library-type"></LibraryType>
-      <LocalMusicList :folderlist="localMusicFolder" :classifylist="localMusicClassify" type="local" v-if="localMusicFolder" class="local-list"></LocalMusicList>
-      <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length == 0">去设置扫描地址</div>
+      <LocalMusicList :folderlist="localDirectoryTree" :classifylist="localMusicClassify" type="local" v-if="localDirectoryTree" class="local-list"></LocalMusicList>
+      <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length === 0">去设置扫描地址</div>
     </div>
       <div class="library-view">
         <router-view v-slot="{ Component }">
@@ -31,7 +31,7 @@
           </keep-alive>
         </router-view>
         <Transition name="fade">
-          <div class="library-container" v-show="(router.currentRoute.value.fullPath == '/mymusic')">
+          <div class="library-container" v-show="(router.currentRoute.value.fullPath === '/mymusic')">
             <div class="library-nodata">
                 <div class="line1"></div>
                 <span class="tip">NONE</span>

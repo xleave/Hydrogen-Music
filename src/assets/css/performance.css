@@ -1,0 +1,20 @@
+/* Visual-equivalent renderer optimizations for WebKitGTK. */
+
+/* Manual lyric scrolling deliberately disables blur. `filter: none` avoids
+ * allocating a filter surface while the lyric track is moving. */
+.lyric-inactive,
+.lyric-inactive .lyric-text-group,
+.lyric-area .line:active {
+  filter: none !important;
+}
+
+/* The cover backdrop is now pre-rendered at low resolution once per track.
+ * Keep only paint isolation and a stable transform layer; there is no live
+ * full-window CSS filter to promote or recompute. */
+.music-player .back-drop {
+  contain: paint;
+  backface-visibility: hidden;
+  will-change: opacity;
+  transform: translate3d(-10%, -10%, 0) !important;
+  pointer-events: none;
+}
