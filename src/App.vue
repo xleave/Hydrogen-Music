@@ -1,5 +1,6 @@
 <script setup>
-  import { defineAsyncComponent } from 'vue'
+  import { computed, defineAsyncComponent } from 'vue'
+  import { useRoute } from 'vue-router'
   import Home from './views/Home.vue'
   import Title from './components/Title.vue'
   import WindowControl from './components/WindowControl.vue'
@@ -15,12 +16,14 @@
   // loaded after the root app has mounted; when collapsed it does not sample.
   const PerformanceMonitor = defineAsyncComponent(() => import('./components/PerformanceMonitor.vue'))
   const playerStore = usePlayerStore()
+  const route = useRoute()
+  const settingsOverlay = computed(() => route.name === 'settings')
 </script>
 
 <template>
-  <div class="mainWindow">
+  <div class="mainWindow" :class="{ 'settings-overlay': settingsOverlay }">
     <Transition name="home">
-      <Home class="home" v-show="playerStore.widgetState"></Home>
+      <Home class="home" v-show="playerStore.widgetState || settingsOverlay"></Home>
     </Transition>
   </div>
   <div class="globalWidget">
@@ -76,6 +79,10 @@
     @keyframes mainWindows-starting {
       0%{background-color: rgba(222, 235, 239, 1);opacity: 0;transform: scale(1.3);}
       100%{background-color: rgb(255, 255, 255);opacity: 1;transform: scale(1);}
+    }
+    &.settings-overlay{
+      position: relative;
+      z-index: 900;
     }
     .home{
       height: calc(100% - 78Px);
