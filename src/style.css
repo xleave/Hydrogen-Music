@@ -47,12 +47,16 @@ body {
 .settings-page .default-shortcuts {
   width: 132px !important;
   box-sizing: border-box !important;
-  border: 1px solid transparent !important;
+  border: 0 !important;
+}
+
+.settings-page .default-shortcuts:hover,
+.settings-page .font-control .selector:hover,
+.settings-page .local-folder .add-option:hover {
+  box-shadow: inset 0 0 0 1px black !important;
 }
 
 .settings-page .default-shortcuts:hover {
-  border-color: black !important;
-  box-shadow: none !important;
   background-color: rgba(255, 255, 255, .48) !important;
 }
 
