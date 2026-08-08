@@ -7,6 +7,7 @@
   import ContextMenu from './components/ContextMenu.vue'
   import GlobalDialog from './components/GlobalDialog.vue'
   import GlobalNotice from './components/GlobalNotice.vue'
+  import PerformanceMonitor from './components/PerformanceMonitor.vue'
 
   import { usePlayerStore } from './store/playerStore'
 
@@ -44,6 +45,7 @@
   <div class="globalNotice">
     <GlobalNotice></GlobalNotice>
   </div>
+  <PerformanceMonitor />
 </template>
 
 <style lang="scss">
