@@ -306,7 +306,7 @@ fn scan_directory(
             }
         }
     }
-    entries.sort_unstable_by(|a, b| a.file_name().cmp(&b.file_name()));
+    entries.sort_unstable_by_key(|a| a.file_name());
 
     let mut sub_dirs = Vec::new();
     let mut audio_paths = Vec::new();
@@ -332,10 +332,11 @@ fn scan_directory(
             if budget.reserve_directory() {
                 sub_dirs.push(entry_path);
             }
-        } else if file_type.is_file() && is_audio_file(&entry_path) {
-            if budget.reserve_track() {
-                audio_paths.push(entry_path);
-            }
+        } else if file_type.is_file()
+            && is_audio_file(&entry_path)
+            && budget.reserve_track()
+        {
+            audio_paths.push(entry_path);
         }
     }
 
