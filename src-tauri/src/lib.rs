@@ -726,7 +726,6 @@ fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
 #[tauri::command]
 async fn media_set_metadata(
     app: AppHandle,
-    settings: State<'_, SettingsState>,
     media: State<'_, media::MediaState>,
     title: String,
     artist: String,
@@ -739,7 +738,8 @@ async fn media_set_metadata(
     let artist = bounded_text(&artist, MAX_TEXT_CHARS);
     let album = bounded_text(&album, MAX_TEXT_CHARS);
     let cover_url = if let Some(file_path) = file_path {
-        let folders = configured_music_folders(&settings)?;
+        let settings = app.state::<SettingsState>();
+        let folders = configured_music_folders(settings.inner())?;
         tauri::async_runtime::spawn_blocking(move || {
             materialize_media_cover_blocking(app, folders, file_path)
         })
