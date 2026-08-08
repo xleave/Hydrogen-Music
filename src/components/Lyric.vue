@@ -149,6 +149,17 @@ function setTrackOffset(offset) {
   }
 }
 
+function currentTrackOffset(track) {
+  const transform = getComputedStyle(track).transform
+  if (!transform || transform === 'none') return manualScrollOffset
+  try {
+    return new DOMMatrixReadOnly(transform).m42
+  } catch {
+    const match = transform.match(/^matrix\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\s*([^)]+)\)$/)
+    return match ? Number(match[1]) || manualScrollOffset : manualScrollOffset
+  }
+}
+
 function cancelWheelFrame() {
   if (wheelFrame !== null) cancelAnimationFrame(wheelFrame)
   wheelFrame = null
@@ -156,11 +167,22 @@ function cancelWheelFrame() {
   wheelVelocity = 0
 }
 
-function cancelReturnAnimation() {
+function cancelReturnAnimation(preserveVisualPosition = false) {
   if (returnTimer !== null) clearTimeout(returnTimer)
   returnTimer = null
+  const track = lyricTrack.value
+  const visualOffset = preserveVisualPosition && isReturning && track
+    ? currentTrackOffset(track)
+    : null
   isReturning = false
-  lyricTrack.value?.classList.remove('lyric-track-returning')
+  track?.classList.remove('lyric-track-returning')
+  if (visualOffset !== null && track) {
+    track.style.transition = 'none'
+    setTrackOffset(visualOffset)
+    // Commit the current visual transform before wheel inertia resumes.
+    void track.offsetHeight
+    track.style.transition = ''
+  }
 }
 
 function resetManualScroll(immediate = false) {
@@ -295,7 +317,7 @@ function returnToActiveLine() {
 }
 
 function handleWheel(event) {
-  if (isReturning) cancelReturnAnimation()
+  if (isReturning) cancelReturnAnimation(true)
   if (isLyricActive.value) isLyricActive.value = false
 
   pendingWheelDelta = clamp(pendingWheelDelta + normalizeWheelDelta(event), -360, 360)
