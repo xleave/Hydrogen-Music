@@ -63,3 +63,46 @@ body {
 .settings-page .font-control {
   gap: 0 !important;
 }
+
+/* The fixed-height RecycleScroller is the only scroll owner for song rows. */
+.local-music-detail .local-music-list {
+  overflow: hidden !important;
+}
+
+.local-music-detail .virtual-list {
+  contain: layout paint style;
+  will-change: scroll-position;
+  overscroll-behavior: contain;
+}
+
+.local-music-detail .virtual-list::-webkit-scrollbar {
+  width: 5px;
+  height: 10px;
+  background-color: transparent;
+}
+
+.local-music-detail .virtual-list::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+
+.local-music-detail .virtual-list::-webkit-scrollbar-track {
+  display: none;
+}
+
+.local-music-detail .virtual-list:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, .04);
+}
+
+.local-music-detail .vue-recycle-scroller__item-view {
+  contain: layout paint style;
+  will-change: transform;
+}
+
+.local-music-detail .list-item {
+  contain: layout paint style;
+  transition: background-color .2s !important;
+}
+
+.local-music-detail .item-singer {
+  transition: opacity .1s !important;
+}
