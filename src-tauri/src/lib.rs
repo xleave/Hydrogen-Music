@@ -797,9 +797,7 @@ async fn report_frontend_error(
     source: String,
     detail: String,
 ) -> Result<(), String> {
-    let source = bounded_text(&source, 256)
-        .replace('\r', " ")
-        .replace('\n', " ");
+    let source = bounded_text(&source, 256).replace(['\r', '\n'], " ");
     let detail = bounded_text(&detail, 64 * 1024);
     tauri::async_runtime::spawn_blocking(move || {
         let directory = app
