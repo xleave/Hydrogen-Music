@@ -1,16 +1,26 @@
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use serde::Serialize;
-use std::{fs::File, path::Path, sync::{Arc, Mutex}, time::Duration};
+use std::{
+    fs::File,
+    path::Path,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
 
 const STALE_LOAD: &str = "stale audio load";
 
 #[derive(Clone)]
-pub struct AudioState(Arc<Mutex<AudioCore>>);
+pub struct AudioState {
+    core: Arc<Mutex<AudioCore>>,
+    load_generation: Arc<AtomicU64>,
+}
 
 #[derive(Default)]
 struct AudioCore {
     output: Option<AudioOutput>,
-    latest_request_id: u64,
 }
 
 struct AudioOutput {
@@ -31,26 +41,42 @@ pub struct AudioStatus {
 
 impl Default for AudioState {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(AudioCore::default())))
+        Self {
+            core: Arc::new(Mutex::new(AudioCore::default())),
+            load_generation: Arc::new(AtomicU64::new(0)),
+        }
     }
 }
 
 impl AudioState {
-    pub fn load(&self, file_path: &Path, autoplay: bool, volume: f32, request_id: u64) -> Result<AudioStatus, String> {
-        {
-            let mut core = self.0.lock().map_err(|error| error.to_string())?;
-            if request_id <= core.latest_request_id {
-                return Err(STALE_LOAD.to_string());
-            }
-            core.latest_request_id = request_id;
+    /// Reserve a native generation before any blocking decode work starts.
+    /// The renderer never owns this counter, so WebView reloads cannot make
+    /// otherwise valid loads look stale to the long-lived Rust process.
+    pub fn reserve_load(&self) -> u64 {
+        self.load_generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub fn invalidate_pending_loads(&self) {
+        self.load_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub fn load_reserved(
+        &self,
+        file_path: &Path,
+        autoplay: bool,
+        volume: f32,
+        generation: u64,
+    ) -> Result<AudioStatus, String> {
+        if generation != self.load_generation.load(Ordering::Acquire) {
+            return Err(STALE_LOAD.to_string());
         }
 
         let file = File::open(file_path).map_err(|error| error.to_string())?;
         let decoder = Decoder::try_from(file).map_err(|error| error.to_string())?;
         let duration = decoder.total_duration().unwrap_or_default();
 
-        let mut core = self.0.lock().map_err(|error| error.to_string())?;
-        if request_id != core.latest_request_id {
+        let mut core = self.core.lock().map_err(|error| error.to_string())?;
+        if generation != self.load_generation.load(Ordering::Acquire) {
             return Err(STALE_LOAD.to_string());
         }
 
@@ -62,7 +88,12 @@ impl AudioState {
                 .open_sink_or_fallback()
                 .map_err(|error| error.to_string())?;
             let player = Player::connect_new(device.mixer());
-            core.output = Some(AudioOutput { _device: device, player, duration, loaded: false });
+            core.output = Some(AudioOutput {
+                _device: device,
+                player,
+                duration,
+                loaded: false,
+            });
         }
 
         let output = core.output.as_mut().expect("audio output was initialized");
@@ -78,23 +109,51 @@ impl AudioState {
         Ok(output.status())
     }
 
+    /// Compatibility shim for callers compiled against the previous API.
+    /// New code should reserve a generation before entering a blocking task
+    /// and call `load_reserved` with that generation.
+    pub fn load(
+        &self,
+        file_path: &Path,
+        autoplay: bool,
+        volume: f32,
+        _request_id: u64,
+    ) -> Result<AudioStatus, String> {
+        let generation = self.reserve_load();
+        self.load_reserved(file_path, autoplay, volume, generation)
+    }
+
     pub fn play(&self) -> Result<AudioStatus, String> {
-        self.with_output(|output| { output.player.play(); Ok(output.status()) })
+        self.with_output(|output| {
+            output.player.play();
+            Ok(output.status())
+        })
     }
 
     pub fn pause(&self) -> Result<AudioStatus, String> {
-        self.with_output(|output| { output.player.pause(); Ok(output.status()) })
+        self.invalidate_pending_loads();
+        self.with_output(|output| {
+            output.player.pause();
+            Ok(output.status())
+        })
     }
 
     pub fn seek(&self, position: f64) -> Result<AudioStatus, String> {
         self.with_output(|output| {
-            output.player.try_seek(Duration::from_secs_f64(position.max(0.0))).map_err(|error| error.to_string())?;
+            let target = Duration::from_secs_f64(position.max(0.0)).min(output.duration);
+            output
+                .player
+                .try_seek(target)
+                .map_err(|error| error.to_string())?;
             Ok(output.status())
         })
     }
 
     pub fn set_volume(&self, volume: f32) -> Result<(), String> {
-        self.with_output(|output| { output.player.set_volume(volume.clamp(0.0, 1.0)); Ok(()) })
+        self.with_output(|output| {
+            output.player.set_volume(volume.clamp(0.0, 1.0));
+            Ok(())
+        })
     }
 
     pub fn status(&self) -> Result<AudioStatus, String> {
@@ -106,7 +165,8 @@ impl AudioState {
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        let mut core = self.0.lock().map_err(|error| error.to_string())?;
+        self.invalidate_pending_loads();
+        let mut core = self.core.lock().map_err(|error| error.to_string())?;
         if let Some(output) = core.output.as_mut() {
             output.player.stop();
             output.loaded = false;
@@ -114,9 +174,16 @@ impl AudioState {
         Ok(())
     }
 
-    fn with_output<T>(&self, operation: impl FnOnce(&mut AudioOutput) -> Result<T, String>) -> Result<T, String> {
-        let mut core = self.0.lock().map_err(|error| error.to_string())?;
-        let output = core.output.as_mut().filter(|output| output.loaded).ok_or_else(|| "no audio is loaded".to_string())?;
+    fn with_output<T>(
+        &self,
+        operation: impl FnOnce(&mut AudioOutput) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut core = self.core.lock().map_err(|error| error.to_string())?;
+        let output = core
+            .output
+            .as_mut()
+            .filter(|output| output.loaded)
+            .ok_or_else(|| "no audio is loaded".to_string())?;
         operation(output)
     }
 }
@@ -124,7 +191,11 @@ impl AudioState {
 impl AudioOutput {
     fn status(&self) -> AudioStatus {
         let ended = self.loaded && self.player.empty();
-        let position = if ended { self.duration } else { self.player.get_pos().min(self.duration) };
+        let position = if ended {
+            self.duration
+        } else {
+            self.player.get_pos().min(self.duration)
+        };
         AudioStatus {
             position: position.as_secs_f64(),
             duration: self.duration.as_secs_f64(),
