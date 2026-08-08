@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 pub const STALE_SCAN: &str = "stale music scan";
@@ -18,6 +18,8 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 ];
 const MAX_SCAN_DEPTH: usize = 128;
 const MAX_TRACKS: usize = 100_000;
+const MAX_DIRECTORIES: usize = 100_000;
+const MAX_VISITED_ENTRIES: usize = 1_000_000;
 const MAX_METADATA_CHARS: usize = 4096;
 const MAX_ARTISTS: usize = 32;
 const MAX_GENRES: usize = 32;
@@ -74,13 +76,53 @@ struct FormatMetadata {
     sample_rate: Option<u32>,
 }
 
+struct ScanBudget {
+    tracks: AtomicUsize,
+    directories: AtomicUsize,
+    entries: AtomicUsize,
+    truncated: AtomicBool,
+}
+
+impl ScanBudget {
+    fn new() -> Self {
+        Self {
+            tracks: AtomicUsize::new(0),
+            directories: AtomicUsize::new(0),
+            entries: AtomicUsize::new(0),
+            truncated: AtomicBool::new(false),
+        }
+    }
+
+    fn reserve(counter: &AtomicUsize, max: usize, truncated: &AtomicBool) -> bool {
+        if counter.fetch_add(1, Ordering::Relaxed) < max {
+            true
+        } else {
+            counter.fetch_sub(1, Ordering::Relaxed);
+            truncated.store(true, Ordering::Release);
+            false
+        }
+    }
+
+    fn reserve_track(&self) -> bool {
+        Self::reserve(&self.tracks, MAX_TRACKS, &self.truncated)
+    }
+
+    fn reserve_directory(&self) -> bool {
+        Self::reserve(&self.directories, MAX_DIRECTORIES, &self.truncated)
+    }
+
+    fn reserve_entry(&self) -> bool {
+        Self::reserve(&self.entries, MAX_VISITED_ENTRIES, &self.truncated)
+    }
+}
+
 pub fn scan(
     folders: &[PathBuf],
     request_id: u64,
     latest_request_id: &AtomicU64,
 ) -> Result<ScanResult, String> {
     ensure_current(request_id, latest_request_id)?;
-    let total_tracks = AtomicUsize::new(0);
+    let budget = ScanBudget::new();
     let roots: Result<Vec<Option<(Node, usize)>>, String> = folders
         .par_iter()
         .map(|folder| {
@@ -96,13 +138,10 @@ pub fn scan(
                 eprintln!("[library scan] {} 不是目录", root.display());
                 return Ok(None);
             }
-            match scan_directory(
-                &root,
-                0,
-                request_id,
-                latest_request_id,
-                &total_tracks,
-            ) {
+            if !budget.reserve_directory() {
+                return Ok(None);
+            }
+            match scan_directory(&root, 0, request_id, latest_request_id, &budget) {
                 Ok(result) => Ok(Some(result)),
                 Err(error) if error == STALE_SCAN => Err(error),
                 Err(error) => {
@@ -123,7 +162,7 @@ pub fn scan(
         dir_tree,
         loca_files_metadata: metadata_roots,
         count,
-        truncated: total_tracks.load(Ordering::Relaxed) >= MAX_TRACKS,
+        truncated: budget.truncated.load(Ordering::Acquire),
     })
 }
 
@@ -140,10 +179,11 @@ fn scan_directory(
     depth: usize,
     request_id: u64,
     latest_request_id: &AtomicU64,
-    total_tracks: &AtomicUsize,
+    budget: &ScanBudget,
 ) -> Result<(Node, usize), String> {
     ensure_current(request_id, latest_request_id)?;
     if depth > MAX_SCAN_DEPTH {
+        budget.truncated.store(true, Ordering::Release);
         return Err(format!("目录层级过深: {}", path.display()));
     }
 
@@ -152,6 +192,9 @@ fn scan_directory(
     let mut entries = Vec::new();
     for entry in read_dir {
         ensure_current(request_id, latest_request_id)?;
+        if !budget.reserve_entry() {
+            break;
+        }
         if let Ok(entry) = entry {
             entries.push(entry);
         }
@@ -171,13 +214,13 @@ fn scan_directory(
 
         let entry_path = entry.path();
         if file_type.is_dir() {
-            sub_dirs.push(entry_path);
-        } else if file_type.is_file() && is_audio_file(&entry_path) {
-            if total_tracks.fetch_add(1, Ordering::Relaxed) >= MAX_TRACKS {
-                total_tracks.fetch_sub(1, Ordering::Relaxed);
-                break;
+            if budget.reserve_directory() {
+                sub_dirs.push(entry_path);
             }
-            audio_paths.push(entry_path);
+        } else if file_type.is_file() && is_audio_file(&entry_path) {
+            if budget.reserve_track() {
+                audio_paths.push(entry_path);
+            }
         }
     }
 
@@ -185,13 +228,7 @@ fn scan_directory(
     let mut count = 0usize;
     for sub in sub_dirs {
         ensure_current(request_id, latest_request_id)?;
-        match scan_directory(
-            &sub,
-            depth + 1,
-            request_id,
-            latest_request_id,
-            total_tracks,
-        ) {
+        match scan_directory(&sub, depth + 1, request_id, latest_request_id, budget) {
             Ok((node, child_count)) => {
                 count += child_count;
                 children.push(node);
@@ -202,7 +239,6 @@ fn scan_directory(
     }
 
     ensure_current(request_id, latest_request_id)?;
-    let file_count = audio_paths.len();
     let file_nodes: Vec<Node> = audio_paths
         .par_iter()
         .filter_map(|audio_path| {
@@ -214,7 +250,7 @@ fn scan_directory(
         .collect();
 
     ensure_current(request_id, latest_request_id)?;
-    count += file_count;
+    count += file_nodes.len();
     children.extend(file_nodes);
 
     let name = path
@@ -247,6 +283,22 @@ fn is_audio_file(path: &Path) -> bool {
 
 fn bounded_text(value: &str) -> String {
     value.chars().take(MAX_METADATA_CHARS).collect()
+}
+
+fn fnv1a(bytes: impl Iterator<Item = u8>, mut hash: u64) -> u64 {
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn stable_track_id(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    let bytes = text.as_bytes();
+    let first = fnv1a(bytes.iter().copied(), 0xcbf29ce484222325);
+    let second = fnv1a(bytes.iter().rev().copied(), 0x84222325cbf29ce4);
+    format!("track:{first:016x}{second:016x}")
 }
 
 fn read_track(path: &Path) -> Result<Node, String> {
@@ -321,7 +373,7 @@ fn read_track(path: &Path) -> Result<Node, String> {
         dir_path: file_path.clone(),
         node_type: "music".into(),
         children: None,
-        id: Some(file_path.clone()),
+        id: Some(stable_track_id(path)),
         common: Some(CommonMetadata {
             local_title,
             file_url: file_path,
@@ -371,7 +423,7 @@ fn fallback_track(path: &Path) -> Node {
         dir_path: file_path.clone(),
         node_type: "music".into(),
         children: None,
-        id: Some(file_path.clone()),
+        id: Some(stable_track_id(path)),
         common: Some(CommonMetadata {
             local_title: local_title.clone(),
             file_url: file_path,
@@ -443,5 +495,26 @@ mod tests {
     fn metadata_is_bounded() {
         let long = "x".repeat(MAX_METADATA_CHARS + 100);
         assert_eq!(bounded_text(&long).chars().count(), MAX_METADATA_CHARS);
+    }
+
+    #[test]
+    fn track_ids_are_stable_and_compact() {
+        let path = Path::new("/music/example/song.flac");
+        let first = stable_track_id(path);
+        let second = stable_track_id(path);
+        assert_eq!(first, second);
+        assert!(first.starts_with("track:"));
+        assert_eq!(first.len(), 38);
+    }
+
+    #[test]
+    fn budget_only_marks_truncated_after_a_real_overflow() {
+        let budget = ScanBudget::new();
+        for _ in 0..MAX_TRACKS {
+            assert!(budget.reserve_track());
+        }
+        assert!(!budget.truncated.load(Ordering::Acquire));
+        assert!(!budget.reserve_track());
+        assert!(budget.truncated.load(Ordering::Acquire));
     }
 }
