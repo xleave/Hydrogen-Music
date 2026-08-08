@@ -26,7 +26,7 @@ function select(id) {
 </template>
 
 <style scoped lang="scss">
-.context-menu { position: absolute; overflow: hidden; }
+.context-menu { position: absolute; overflow: hidden; z-index: var(--z-popover); }
 .menu-container { padding: 18Px 0; position: relative; background-color: #202020; transform: translateY(-100%); animation: menu-in .2s cubic-bezier(.3,.79,.55,.99) forwards; }
 @keyframes menu-in { to { transform: translateY(0); } }
 .menu-item { display: flex; flex-direction: column; .item { padding: 10Px 18Px; width: 100%; font: 13Px SourceHanSansCN-Bold; color: white; text-align: left; transition: .2s; z-index: 2; &:hover { cursor: pointer; background-color: rgb(53 53 53 / 70%); } &:active { transform: scale(.95); } } }
