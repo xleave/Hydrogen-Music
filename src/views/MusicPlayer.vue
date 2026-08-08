@@ -1,12 +1,38 @@
 <script setup>
+  import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
   import Player from '../components/Player.vue'
   import Lyric from '../components/Lyric.vue'
   import { usePlayerStore } from '../store/playerStore';
+  import { attachLyricPaintCulling } from '../utils/lyricPaintCulling'
+  import '../assets/css/performance.css'
+
   const playerStore = usePlayerStore()
+  const playerRoot = ref(null)
+  let lyricCulling = null
+  let cullingRevision = 0
+
+  async function syncLyricCulling() {
+    const revision = ++cullingRevision
+    lyricCulling?.dispose()
+    lyricCulling = null
+    if (playerStore.widgetState) return
+
+    await nextTick()
+    if (revision !== cullingRevision || playerStore.widgetState) return
+    const area = playerRoot.value?.querySelector('.lyric-area')
+    if (area) lyricCulling = attachLyricPaintCulling(area)
+  }
+
+  watch(() => playerStore.widgetState, syncLyricCulling, { immediate: true })
+  onBeforeUnmount(() => {
+    cullingRevision += 1
+    lyricCulling?.dispose()
+    lyricCulling = null
+  })
 </script>
 
 <template>
-  <div class="music-player">
+  <div ref="playerRoot" class="music-player">
     <Transition name="fade3">
       <div class="back-drop" :style="{'backgroundImage': 'url(' + playerStore.coverUrl + ')'}" v-if="playerStore.coverBlur"></div>
     </Transition>
