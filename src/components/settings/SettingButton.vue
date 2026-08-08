@@ -5,6 +5,8 @@ const props = defineProps({
   width: { type: [Number, String], default: null },
   padding: { type: String, default: '6px' },
   fontSize: { type: Number, default: 14 },
+  hoverOpacity: { type: Number, default: 1 },
+  hoverBackground: { type: String, default: 'rgba(255, 255, 255, .35)' },
 })
 defineEmits(['click'])
 
@@ -12,6 +14,8 @@ const style = computed(() => ({
   width: props.width == null ? undefined : (typeof props.width === 'number' ? `${props.width}px` : props.width),
   padding: props.padding,
   fontSize: `${props.fontSize}px`,
+  '--setting-button-hover-opacity': String(props.hoverOpacity),
+  '--setting-button-hover-background': props.hoverBackground,
 }))
 </script>
 
@@ -35,7 +39,8 @@ const style = computed(() => ({
   cursor: pointer;
 
   &:hover {
-    opacity: .8;
+    opacity: var(--setting-button-hover-opacity);
+    background-color: var(--setting-button-hover-background);
     box-shadow: inset 0 0 0 1px black;
   }
 }
