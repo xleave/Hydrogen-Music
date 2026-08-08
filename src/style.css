@@ -27,6 +27,14 @@ body {
 }
 
 /* Settings polish. Keep these global because Settings.vue uses scoped styles. */
+.settings-page .view-control {
+  margin-top: 14px !important;
+}
+
+.settings-page .settings-container {
+  height: calc(100% - 61px) !important;
+}
+
 .settings-page .view-control .router-last {
   margin-right: 10px !important;
 }
