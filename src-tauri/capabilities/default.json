@@ -4,7 +4,8 @@
   "description": "Hydrogen Music desktop capability",
   "windows": ["main"],
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "core:window:allow-maximize",
