@@ -19,6 +19,7 @@ export {
   changePlayMode,
   loadLastSong,
   localMusicHandle,
+  markPlaylistCleared,
   playAll,
   playLast,
   playNext,
