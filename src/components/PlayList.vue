@@ -2,7 +2,7 @@
   import { RecycleScroller } from 'vue-virtual-scroller'
   import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
   import { pauseMusic } from '../utils/player';
-  import { addSong, savePlaylist, setShuffledList } from '../utils/player'
+  import { addSong, markPlaylistCleared, savePlaylist, setShuffledList } from '../utils/player'
   import { usePlayerStore } from '../store/playerStore'
   import { computed } from 'vue'
   import { storeToRefs } from 'pinia'
@@ -13,23 +13,21 @@
   const clearPlaylist = () => {
     playlistWidgetShow.value = false
     pauseMusic()
-    const clearMusic = setTimeout(() => {
-      songList.value = null
-      listInfo.value = null
-      songId.value = null
-      shuffledList.value = null
-      currentIndex.value = 0
-      shuffleIndex.value = 0
-      currentMusic.value?.unload()
-      currentMusic.value = null
-      progress.value = 0
-      if(!widgetState.value) {
-        widgetState.value = true;
-        lyricShow.value = false
-      }
-      savePlaylist()
-      clearTimeout(clearMusic)
-    }, 300);
+    currentMusic.value?.unload()
+    songList.value = []
+    listInfo.value = null
+    songId.value = null
+    shuffledList.value = null
+    currentIndex.value = 0
+    shuffleIndex.value = 0
+    currentMusic.value = null
+    progress.value = 0
+    if(!widgetState.value) {
+      widgetState.value = true;
+      lyricShow.value = false
+    }
+    windowApi.clearSystemMedia?.().catch?.((error) => console.error('[media.clear]', error))
+    markPlaylistCleared()
   }
 
   const play = (id, index) => {
