@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
+import SettingToggle from './settings/SettingToggle.vue'
 import { useLocalStore } from '../store/localStore'
 import { usePlayerStore } from '../store/playerStore'
 import {
@@ -35,6 +36,7 @@ function persistMonitorEnabled(value) {
 
 const enabled = ref(readMonitorEnabled())
 const settingsVisible = computed(() => route.name === 'settings')
+const settingsTarget = ref(null)
 const metrics = ref({
   fps: 0,
   averageFrame: 0,
@@ -61,6 +63,7 @@ let frameDurations = []
 let previousIpcTotal = 0
 let previousAudioStatus = 0
 let previousSampleAt = 0
+let targetRevision = 0
 
 const selectedCount = computed(() => currentSelectedSongs.value?.length || 0)
 const queueCount = computed(() => songList.value?.length || 0)
@@ -87,6 +90,32 @@ function formatBytes(value) {
   if (!Number.isFinite(value)) return '—'
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
   return `${(value / 1024 / 1024).toFixed(1)} MiB`
+}
+
+function findOtherSettingsTarget() {
+  const sections = document.querySelectorAll('.settings-page .settings-item')
+  for (const section of sections) {
+    if (section.querySelector('.item-title')?.textContent?.trim() !== '其他') continue
+    return section.querySelector('.item-options')
+  }
+  return null
+}
+
+async function syncSettingsTarget() {
+  const revision = ++targetRevision
+  settingsTarget.value = null
+  if (!settingsVisible.value) return
+
+  await nextTick()
+  if (revision !== targetRevision || !settingsVisible.value) return
+  settingsTarget.value = findOtherSettingsTarget()
+
+  if (!settingsTarget.value) {
+    requestAnimationFrame(() => {
+      if (revision !== targetRevision || !settingsVisible.value) return
+      settingsTarget.value = findOtherSettingsTarget()
+    })
+  }
 }
 
 function updateMetrics() {
@@ -171,18 +200,29 @@ watch(enabled, (value) => {
   else stopMonitoring()
 }, { immediate: true })
 
-onBeforeUnmount(stopMonitoring)
+watch(settingsVisible, syncSettingsTarget, { immediate: true, flush: 'post' })
+
+onBeforeUnmount(() => {
+  targetRevision += 1
+  stopMonitoring()
+})
 </script>
 
 <template>
-  <div v-if="settingsVisible" class="monitor-setting-control">
-    <span class="monitor-setting-label">性能监测</span>
-    <button class="monitor-switch" type="button" :class="{ 'monitor-switch-on': enabled }" @click="toggleMonitoring">
-      {{ enabled ? '已开启' : '已关闭' }}
-    </button>
-  </div>
+  <Teleport v-if="settingsTarget" :to="settingsTarget">
+    <div class="monitor-setting-control">
+      <div class="monitor-setting-label">性能监测</div>
+      <div class="monitor-setting-operation">
+        <SettingToggle
+          :active="enabled"
+          :label="enabled ? '已开启' : '已关闭'"
+          @toggle="toggleMonitoring"
+        />
+      </div>
+    </div>
+  </Teleport>
 
-  <div v-if="enabled" class="performance-monitor" :class="{ 'performance-monitor-settings': settingsVisible }">
+  <div v-if="enabled" class="performance-monitor">
     <div class="monitor-header">
       <span>性能监测</span>
       <span class="monitor-state">常驻</span>
@@ -244,34 +284,17 @@ onBeforeUnmount(stopMonitoring)
 
 <style scoped lang="scss">
 .monitor-setting-control {
-  position: fixed;
-  right: 10%;
-  bottom: 22Px;
-  z-index: 1199;
+  margin-bottom: 32px;
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 18Px;
+  justify-content: space-between;
 
   .monitor-setting-label {
-    font: 14Px SourceHanSansCN-Bold;
+    font-family: SourceHanSansCN-Bold;
+    font-size: 16px;
     color: black;
-  }
-
-  .monitor-switch {
-    width: 200Px;
-    height: 34Px;
-    padding: 5Px 10Px;
-    border: 0;
-    box-sizing: border-box;
-    background: rgba(255, 255, 255, .35);
-    color: black;
-    font: 13Px SourceHanSansCN-Bold;
-    line-height: 24Px;
-    cursor: pointer;
-    transition: opacity .2s, background-color .2s, color .2s;
-
-    &:hover { opacity: .8; }
-    &.monitor-switch-on { background: black; color: white; }
+    text-align: left;
   }
 }
 
@@ -283,8 +306,6 @@ onBeforeUnmount(stopMonitoring)
   width: 430Px;
   background: rgba(225, 240, 240, .96);
   box-shadow: 0 0 0 .5Px rgba(0, 0, 0, .24), 0 8Px 24Px rgba(0, 0, 0, .08);
-
-  &.performance-monitor-settings { bottom: 72Px; }
 
   .monitor-header {
     width: 100%;
