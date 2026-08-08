@@ -1,4 +1,5 @@
 <script setup>
+  import { defineAsyncComponent } from 'vue'
   import Home from './views/Home.vue'
   import Title from './components/Title.vue'
   import WindowControl from './components/WindowControl.vue'
@@ -10,6 +11,9 @@
 
   import { usePlayerStore } from './store/playerStore'
 
+  // Diagnostics must never be a first-frame dependency. The component is
+  // loaded after the root app has mounted; when collapsed it does not sample.
+  const PerformanceMonitor = defineAsyncComponent(() => import('./components/PerformanceMonitor.vue'))
   const playerStore = usePlayerStore()
 </script>
 
@@ -44,6 +48,7 @@
   <div class="globalNotice">
     <GlobalNotice></GlobalNotice>
   </div>
+  <PerformanceMonitor />
 </template>
 
 <style lang="scss">
