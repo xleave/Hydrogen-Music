@@ -748,13 +748,7 @@ async fn media_set_metadata(
     } else {
         None
     };
-    media.set_metadata(
-        &title,
-        &artist,
-        &album,
-        duration,
-        cover_url.as_deref(),
-    )
+    media.set_metadata(&title, &artist, &album, duration, cover_url.as_deref())
 }
 
 #[tauri::command]
