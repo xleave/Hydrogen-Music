@@ -332,10 +332,7 @@ fn scan_directory(
             if budget.reserve_directory() {
                 sub_dirs.push(entry_path);
             }
-        } else if file_type.is_file()
-            && is_audio_file(&entry_path)
-            && budget.reserve_track()
-        {
+        } else if file_type.is_file() && is_audio_file(&entry_path) && budget.reserve_track() {
             audio_paths.push(entry_path);
         }
     }
