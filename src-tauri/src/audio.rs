@@ -4,18 +4,20 @@ use std::{
     fs::File,
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
 };
 
 const STALE_LOAD: &str = "stale audio load";
+const DEVICE_FAULT: &str = "audio output device faulted";
 
 #[derive(Clone)]
 pub struct AudioState {
     core: Arc<Mutex<AudioCore>>,
     load_generation: Arc<AtomicU64>,
+    device_faulted: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -44,6 +46,7 @@ impl Default for AudioState {
         Self {
             core: Arc::new(Mutex::new(AudioCore::default())),
             load_generation: Arc::new(AtomicU64::new(0)),
+            device_faulted: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -58,6 +61,35 @@ impl AudioState {
 
     pub fn invalidate_pending_loads(&self) {
         self.load_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn rebuild_output_if_needed(&self, core: &mut AudioCore, duration: Duration) -> Result<(), String> {
+        if core.output.is_some() && !self.device_faulted.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        core.output = None;
+        // Clear first; the error callback can set the bit again immediately if
+        // the newly opened stream itself is already unhealthy.
+        self.device_faulted.store(false, Ordering::Release);
+        let faulted = self.device_faulted.clone();
+        let device = DeviceSinkBuilder::from_default_device()
+            .map_err(|error| error.to_string())?
+            .with_buffer_size(rodio::cpal::BufferSize::Fixed(4096))
+            .with_error_callback(move |error| {
+                faulted.store(true, Ordering::Release);
+                eprintln!("[native audio] {error}");
+            })
+            .open_sink_or_fallback()
+            .map_err(|error| error.to_string())?;
+        let player = Player::connect_new(device.mixer());
+        core.output = Some(AudioOutput {
+            _device: device,
+            player,
+            duration,
+            loaded: false,
+        });
+        Ok(())
     }
 
     pub fn load_reserved(
@@ -80,20 +112,9 @@ impl AudioState {
             return Err(STALE_LOAD.to_string());
         }
 
-        if core.output.is_none() {
-            let device = DeviceSinkBuilder::from_default_device()
-                .map_err(|error| error.to_string())?
-                .with_buffer_size(rodio::cpal::BufferSize::Fixed(4096))
-                .with_error_callback(|error| eprintln!("[native audio] {error}"))
-                .open_sink_or_fallback()
-                .map_err(|error| error.to_string())?;
-            let player = Player::connect_new(device.mixer());
-            core.output = Some(AudioOutput {
-                _device: device,
-                player,
-                duration,
-                loaded: false,
-            });
+        self.rebuild_output_if_needed(&mut core, duration)?;
+        if generation != self.load_generation.load(Ordering::Acquire) {
+            return Err(STALE_LOAD.to_string());
         }
 
         let output = core.output.as_mut().expect("audio output was initialized");
@@ -109,21 +130,10 @@ impl AudioState {
         Ok(output.status())
     }
 
-    /// Compatibility shim for callers compiled against the previous API.
-    /// New code should reserve a generation before entering a blocking task
-    /// and call `load_reserved` with that generation.
-    pub fn load(
-        &self,
-        file_path: &Path,
-        autoplay: bool,
-        volume: f32,
-        _request_id: u64,
-    ) -> Result<AudioStatus, String> {
-        let generation = self.reserve_load();
-        self.load_reserved(file_path, autoplay, volume, generation)
-    }
-
     pub fn play(&self) -> Result<AudioStatus, String> {
+        if self.device_faulted.load(Ordering::Acquire) {
+            return Err(DEVICE_FAULT.to_string());
+        }
         self.with_output(|output| {
             output.player.play();
             Ok(output.status())
@@ -157,11 +167,21 @@ impl AudioState {
     }
 
     pub fn status(&self) -> Result<AudioStatus, String> {
+        if self.device_faulted.load(Ordering::Acquire) {
+            return Err(DEVICE_FAULT.to_string());
+        }
         self.with_output(|output| Ok(output.status()))
     }
 
     pub fn position(&self) -> f64 {
-        self.status().map_or(0.0, |status| status.position)
+        let Ok(mut core) = self.core.lock() else {
+            return 0.0;
+        };
+        core.output
+            .as_mut()
+            .filter(|output| output.loaded)
+            .map(|output| output.player.get_pos().min(output.duration).as_secs_f64())
+            .unwrap_or(0.0)
     }
 
     pub fn stop(&self) -> Result<(), String> {
