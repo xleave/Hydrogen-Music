@@ -1,4 +1,5 @@
 import { playerRefs, otherStore } from './state'
+import { flushSettings } from '../initApp'
 import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, registerPlaybackCheckpointHandler, startMusic, stopProgress } from './playback'
 import { applyPlayMode, playLast, playNext, savePlaylist } from './playlist'
 
@@ -9,10 +10,25 @@ function isInside(target, selector) {
   return target instanceof Node && (document.querySelector(selector)?.contains(target) ?? false)
 }
 
+async function flushApplicationState() {
+  const results = await Promise.allSettled([savePlaylist(), flushSettings()])
+  for (const result of results) {
+    if (result.status === 'rejected') console.error('[lifecycle flush]', result.reason)
+  }
+}
+
 function handleSystemMediaControl(command) {
   switch (command.action) {
     case 'play': startMusic(); break
     case 'pause': pauseMusic(); break
+    case 'stop':
+      pauseMusic()
+      if (currentMusic.value) {
+        progress.value = 0
+        currentMusic.value.seek(0)
+      }
+      windowApi.setSystemMediaStopped().catch((error) => console.error('[media.stop]', error))
+      break
     case 'toggle': playing.value ? pauseMusic() : startMusic(); break
     case 'next': playNext(); break
     case 'previous': playLast(); break
@@ -45,7 +61,6 @@ export function initializePlayerLifecycle() {
     if (!draggingProgress) return
     changeProgressByDragEnd(progress.value)
     draggingProgress = false
-    savePlaylist().catch((error) => console.error('[playlist checkpoint after seek]', error))
   }
   const onClick = (event) => {
     if (playlistWidgetShow.value) {
@@ -82,10 +97,9 @@ export function initializePlayerLifecycle() {
       const target = Math.max(0, Math.min(currentMusic.value.duration(), progress.value + delta))
       progress.value = target
       currentMusic.value.seek(target)
-      savePlaylist().catch((error) => console.error('[playlist checkpoint after seek]', error))
     }),
-    windowApi.beforeTrayHide(() => savePlaylist()),
-    windowApi.beforeQuit(() => savePlaylist()),
+    windowApi.beforeTrayHide(flushApplicationState),
+    windowApi.beforeQuit(flushApplicationState),
   )
 
   if ('mediaSession' in navigator) {
@@ -94,7 +108,9 @@ export function initializePlayerLifecycle() {
     navigator.mediaSession.setActionHandler('play', startMusic)
     navigator.mediaSession.setActionHandler('pause', pauseMusic)
   }
-  windowApi.playOrPauseMusicCheck(playing.value)
+  // The application starts with no native track loaded. A restored track will
+  // transition MPRIS to Paused only after the Rust player has actually loaded it.
+  windowApi.setSystemMediaStopped().catch((error) => console.error('[media.initial-state]', error))
   windowApi.setSystemMediaVolume(volume.value)
   windowApi.changeTrayMusicPlaymode(playMode.value)
 
