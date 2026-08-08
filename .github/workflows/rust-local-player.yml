@@ -6,9 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   check:
     name: Frontend and Rust checks
@@ -29,16 +26,6 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - run: npm run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - name: Commit resolved Cargo lockfile
-        if: github.event_name == 'push' && github.ref == 'refs/heads/agent/rust-local-player'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src-tauri/Cargo.lock
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: update Rust dependency lockfile"
-            git push
-          fi
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Install cargo-audit
@@ -52,6 +39,7 @@ jobs:
     container: fedora:42
     steps:
       - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install Fedora build dependencies
         run: >-
           dnf install -y
@@ -62,7 +50,6 @@ jobs:
           alsa-lib-devel
           libappindicator-gtk3-devel librsvg2-devel libxdo-devel
           rpm-build patchelf
-      - uses: dtolnay/rust-toolchain@stable
       - run: npm ci --no-fund
       - run: npm run tauri -- build --bundles rpm
       - uses: actions/upload-artifact@v6
