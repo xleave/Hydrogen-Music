@@ -25,9 +25,13 @@ function loadImage(source) {
   })
 }
 
-function remember(source, value) {
-  if (backdropCache.has(source)) backdropCache.delete(source)
-  backdropCache.set(source, value)
+function fallbackCacheKey(source) {
+  return `${source.length}:${source.slice(0, 48)}:${source.slice(-48)}`
+}
+
+function remember(key, value) {
+  if (backdropCache.has(key)) backdropCache.delete(key)
+  backdropCache.set(key, value)
   while (backdropCache.size > CACHE_LIMIT) {
     backdropCache.delete(backdropCache.keys().next().value)
   }
@@ -52,9 +56,10 @@ function drawSoftFallback(context, image, width, height) {
   context.drawImage(tiny, 0, 0, tinyWidth, tinyHeight, 0, 0, width, height)
 }
 
-export async function createCoverBackdrop(source) {
+export async function createCoverBackdrop(source, cacheKey = null) {
   if (!source) return null
-  const cached = backdropCache.get(source)
+  const key = cacheKey || fallbackCacheKey(source)
+  const cached = backdropCache.get(key)
   if (cached) return cached
 
   const image = await loadImage(source)
@@ -96,7 +101,7 @@ export async function createCoverBackdrop(source) {
   }
 
   const backdrop = canvas.toDataURL('image/jpeg', 0.72)
-  remember(source, backdrop)
+  remember(key, backdrop)
   return backdrop
 }
 
