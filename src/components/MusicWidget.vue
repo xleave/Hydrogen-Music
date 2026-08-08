@@ -1,5 +1,5 @@
 <script setup>
-  import { ref, watch} from 'vue'
+  import { ref } from 'vue'
   import { songTime2 } from '../utils/player';
   import VueSlider from 'vue-slider-component'
   import '../assets/css/slider.css'
@@ -10,12 +10,8 @@
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia'
   const playerStore = usePlayerStore()
-  const { currentMusic, playing, progress, playMode, songList, currentIndex, volume, time, playlistWidgetShow, lyricShow, localBase64Img } =storeToRefs(playerStore)
+  const { playing, progress, playMode, songList, currentIndex, volume, time, playlistWidgetShow, lyricShow, localBase64Img } =storeToRefs(playerStore)
   const showMusicTime = ref(false)
-
-  watch(() => volume.value, () => {
-    currentMusic.value?.volume(volume.value)
-  })
 
   const showPlayer = () => {
     playerStore.widgetState = false
@@ -26,7 +22,7 @@
 <template>
   <div class="music-widget">
     <div class="music-progress-container">
-        <vue-slider id="widget-progress" class="music-progress" @click="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
+        <vue-slider data-player-progress class="music-progress" @click="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
         <div class="music-time">{{songTime2(progress)}} / {{songTime2(time)}}</div>
     </div>
     <div class="music-info">
