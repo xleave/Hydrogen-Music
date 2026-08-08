@@ -83,3 +83,32 @@ test('lyric return can be interrupted without losing the visual offset', () => {
   assert.match(lyric, /new DOMMatrixReadOnly\(transform\)\.m42/)
   assert.match(lyric, /if \(isReturning\) cancelReturnAnimation\(true\)/)
 })
+
+test('lyrics consume shared playback progress without a duplicate timer', () => {
+  const lyric = source('src/components/Lyric.vue')
+
+  assert.match(lyric, /progress,/)
+  assert.match(lyric, /\[progress\.value, widgetState\.value, lyricShow\.value, lyricsObjArr\.value\]/)
+  assert.match(lyric, /updateActiveLine\(Number\(seek\)\)/)
+  assert.doesNotMatch(lyric, /activeTimer/)
+  assert.doesNotMatch(lyric, /setInterval\(updateActiveLine/)
+  assert.doesNotMatch(lyric, /currentMusic\.value\?\.seek\(\)/)
+})
+
+test('application version stays consistent across frontend, Rust, Tauri and UI', () => {
+  const packageJson = JSON.parse(source('package.json'))
+  const packageLock = JSON.parse(source('package-lock.json'))
+  const tauriConfig = JSON.parse(source('src-tauri/tauri.conf.json'))
+  const cargo = source('src-tauri/Cargo.toml')
+  const cargoLock = source('src-tauri/Cargo.lock')
+  const settings = source('src/views/Settings.vue')
+  const expected = '0.8.1'
+
+  assert.equal(packageJson.version, expected)
+  assert.equal(packageLock.version, expected)
+  assert.equal(packageLock.packages[''].version, expected)
+  assert.equal(tauriConfig.version, expected)
+  assert.match(cargo, /^version = "0\.8\.1"$/m)
+  assert.match(cargoLock, /\[\[package\]\]\nname = "hydrogen-music"\nversion = "0\.8\.1"/)
+  assert.match(settings, /<div class="version">V0\.8\.1<\/div>/)
+})
