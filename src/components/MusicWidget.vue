@@ -4,9 +4,10 @@
   import VueSlider from 'vue-slider-component'
   import '../assets/css/slider.css'
   import PlayList from './PlayList.vue'
+  import PlayerProgress from './PlayerProgress.vue'
   import AppIcon from './icons/AppIcon.vue'
 
-  import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode } from '../utils/player'
+  import { startMusic, pauseMusic, playLast, playNext, changePlayMode } from '../utils/player'
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia'
   const playerStore = usePlayerStore()
@@ -22,7 +23,7 @@
 <template>
   <div class="music-widget">
     <div class="music-progress-container">
-        <vue-slider data-player-progress class="music-progress" @click="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
+        <PlayerProgress data-player-progress class="music-progress" v-model="progress" :max="time" />
         <div class="music-time">{{songTime2(progress)}} / {{songTime2(time)}}</div>
     </div>
     <div class="music-info">
@@ -96,7 +97,7 @@
             width: 100% !important;
             height: 2.5Px !important;
             background-color: rgb(223, 223, 223);
-            transition: 0.2s;
+            transition: height 0.2s;
         }
         .music-time{
             padding: 0 2Px;
