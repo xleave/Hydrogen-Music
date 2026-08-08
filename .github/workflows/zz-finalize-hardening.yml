@@ -1,0 +1,128 @@
+name: Finalize bounded exit and cleanup
+
+on:
+  push:
+    branches: ["agent/rust-local-player"]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Patch bounded exit, resolve lockfile, remove one-shot workflows
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src-tauri/src/lib.rs')
+          text = path.read_text()
+          start = text.index('pub(crate) fn request_exit(app: &AppHandle) {')
+          end_marker = '\n#[cfg_attr(mobile, tauri::mobile_entry_point)]'
+          end = text.index(end_marker, start)
+          replacement = r'''fn persist_native_snapshot_bounded(
+    app: AppHandle,
+    writer: Arc<Mutex<()>>,
+    snapshot: PlaybackSnapshotState,
+    audio: audio::AudioState,
+    timeout: Duration,
+) -> Result<(), String> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = persist_native_snapshot_blocking(&app, &writer, &snapshot, &audio);
+        let _ = sender.send(result);
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err("native persistence timed out during exit".to_string())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("native persistence worker disconnected during exit".to_string())
+        }
+    }
+}
+
+pub(crate) fn request_exit(app: &AppHandle) {
+    let exit_state = app.state::<ExitState>();
+    if exit_state.0.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("app-exit-requested", ());
+    }
+
+    let app_handle = app.clone();
+    let writer = app.state::<PersistenceState>().0.clone();
+    let snapshot = app.state::<PlaybackSnapshotState>().inner().clone();
+    let audio = app.state::<audio::AudioState>().inner().clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(EXIT_FALLBACK_DELAY);
+        if let Err(error) = persist_native_snapshot_bounded(
+            app_handle.clone(),
+            writer,
+            snapshot,
+            audio,
+            Duration::from_millis(500),
+        ) {
+            eprintln!("[exit] {error}");
+        }
+        app_handle.exit(0);
+    });
+}
+
+#[tauri::command]
+async fn quit_app(
+    app: AppHandle,
+    exit: State<'_, ExitState>,
+    persistence: State<'_, PersistenceState>,
+    snapshot: State<'_, PlaybackSnapshotState>,
+    audio: State<'_, audio::AudioState>,
+) -> Result<(), String> {
+    exit.0.store(true, Ordering::Release);
+    let app_handle = app.clone();
+    let writer = persistence.0.clone();
+    let snapshot = snapshot.inner().clone();
+    let audio = audio.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        persist_native_snapshot_bounded(
+            app_handle,
+            writer,
+            snapshot,
+            audio,
+            Duration::from_millis(1200),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    if let Err(error) = result {
+        eprintln!("[exit] {error}");
+    }
+    app.exit(0);
+    Ok(())
+}
+'''
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text)
+          PY
+          cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 > /dev/null
+          rm -f \
+            .github/workflows/apply-native-scan-generation.yml \
+            .github/workflows/finalize-native-scan-generation.yml \
+            .github/workflows/finalize-core-hardening.yml \
+            .github/workflows/finalize-rust-lock.yml \
+            .github/workflows/zz-finalize-hardening.yml
+          git add -A
+          git commit -m "fix: guarantee bounded native exit fallback"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            sleep 3
+            git pull --rebase origin agent/rust-local-player
+          done
+          exit 1
