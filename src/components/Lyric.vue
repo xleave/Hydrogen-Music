@@ -7,7 +7,6 @@ import { usePlayerStore } from '../store/playerStore'
 const playerStore = usePlayerStore()
 const {
   currentIndex,
-  currentMusic,
   lyric,
   lyricAnimationRevision,
   lyricBlur,
@@ -16,8 +15,8 @@ const {
   lyricSize,
   lyricType,
   lyricsObjArr,
-  playing,
   playerChangeSong,
+  progress,
   rlyricSize,
   songList,
   tlyricSize,
@@ -30,7 +29,6 @@ const interludeAnimation = ref(false)
 const interludeRemainingTime = ref(0)
 const isLyricActive = ref(true)
 const lyricTrack = ref(null)
-let activeTimer = null
 let scrollTimer = null
 let interludeTimer = null
 let wheelFrame = null
@@ -217,9 +215,8 @@ function findActiveLine(seek) {
   return result
 }
 
-function updateActiveLine() {
-  const seek = currentMusic.value?.seek()
-  if (typeof seek !== 'number') return
+function updateActiveLine(seek) {
+  if (!Number.isFinite(seek)) return
   const nextIndex = findActiveLine(seek)
   if (nextIndex !== activeIndex.value) {
     const previousIndex = activeIndex.value
@@ -246,12 +243,6 @@ function updateActiveLine() {
     interludeAnimation.value = false
     interludeIndex.value = null
   }
-}
-
-function startActiveTimer() {
-  clearInterval(activeTimer)
-  activeTimer = setInterval(updateActiveLine, 200)
-  updateActiveLine()
 }
 
 function lineStyle(index) {
@@ -327,11 +318,11 @@ function handleWheel(event) {
 }
 
 watch(
-  () => [widgetState.value, playing.value, lyricShow.value, lyricsObjArr.value],
-  () => {
-    if (!widgetState.value && playing.value && lyricShow.value && lyricsObjArr.value) startActiveTimer()
-    else clearInterval(activeTimer)
+  () => [progress.value, widgetState.value, lyricShow.value, lyricsObjArr.value],
+  ([seek, isWidget, showLyric, lines]) => {
+    if (!isWidget && showLyric && lines) updateActiveLine(Number(seek))
   },
+  { immediate: true },
 )
 
 watch(lyricAnimationRevision, () => {
@@ -343,7 +334,6 @@ watch([lyricSize, tlyricSize, rlyricSize, lyricType], () => {
 }, { deep: true })
 
 onBeforeUnmount(() => {
-  clearInterval(activeTimer)
   clearTimeout(scrollTimer)
   clearTimeout(interludeTimer)
   clearTimeout(returnTimer)
