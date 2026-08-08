@@ -229,9 +229,6 @@ export function startMusic() {
       checkpointPlayback()
     }).catch((error) => {
       playPending = false
-      // A CPAL/PipeWire device fault can make the long-lived sink unusable.
-      // The native layer reports this explicitly; reload the current track so
-      // it can recreate the sink without changing the normal healthy path.
       if (String(error).includes('audio output device faulted')) {
         getSongUrl(currentIndex.value, true)
         return
@@ -255,13 +252,49 @@ export function pauseMusic() {
     currentMusic.value.pause()
       .then(() => checkpointPlayback())
       .catch((error) => {
-        // A pending load can be cancelled before a player has been installed.
-        // The native pause still invalidates that generation, so this error is
-        // harmless when no audio is currently loaded.
         if (!hadPendingLoad || !String(error).includes('no audio is loaded')) reportAudioError('audio.pause', error)
       })
   } else {
     windowApi.audioStop().catch((error) => reportAudioError('audio.stop', error))
+  }
+}
+
+export async function stopMusic() {
+  stopProgress()
+  const hadPendingLoad = playPending
+  invalidateTrackRequest()
+  playing.value = false
+  progress.value = 0
+
+  try {
+    if (currentMusic.value) {
+      try {
+        const paused = await windowApi.audioPause()
+        currentMusic.value.applyStatus(paused)
+      } catch (error) {
+        if (!hadPendingLoad || !String(error).includes('no audio is loaded')) throw error
+      }
+
+      try {
+        const reset = await windowApi.audioSeek(0)
+        currentMusic.value.applyStatus(reset)
+        currentMusic.value.endHandled = false
+        progress.value = reset.position
+      } catch (error) {
+        if (!String(error).includes('no audio is loaded')) throw error
+      }
+    } else {
+      await windowApi.audioStop()
+    }
+  } catch (error) {
+    reportAudioError('audio.stop-state', error)
+  } finally {
+    try {
+      await windowApi.setSystemMediaStopped()
+    } catch (error) {
+      reportAudioError('media.stop', error)
+    }
+    checkpointPlayback()
   }
 }
 
