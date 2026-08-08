@@ -1,5 +1,5 @@
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-family: SourceHanSansCN-Bold, Helvetica, Arial, sans-serif;
   font-size: 16px;
   font-weight: 400;
 
@@ -10,52 +10,82 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+
+  /* One stacking scale for every global surface. */
+  --z-content: 0;
+  --z-player: 100;
+  --z-player-widget: 200;
+  --z-settings: 900;
+  --z-chrome: 1000;
+  --z-notice: 1100;
+  --z-diagnostic: 1500;
+  --z-popover: 1600;
+  --z-modal: 2000;
 }
 
 a {
-  font-weight: 500;
-  text-decoration: inherit;
-}
-
-a {
-  font-weight: 500;
   text-decoration: inherit;
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-.card {
-  padding: 2em;
-}
-
 #app {
   text-align: center;
+}
+
+/* Global layers use the shared scale even when their internal component styles
+ * are scoped. */
+.performance-monitor,
+.monitor-setting-control {
+  z-index: var(--z-diagnostic) !important;
+}
+
+.global-dialog,
+.dialog-container {
+  z-index: var(--z-modal) !important;
+}
+
+/* The fixed-height scroller is the only scroll owner for song rows. */
+.local-music-detail .local-music-list {
+  overflow: hidden !important;
+}
+
+.local-music-detail .virtual-list {
+  contain: layout paint style;
+  overscroll-behavior: contain;
+}
+
+.local-music-detail .virtual-list::-webkit-scrollbar {
+  width: 5px;
+  height: 10px;
+  background-color: transparent;
+}
+
+.local-music-detail .virtual-list::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+
+.local-music-detail .virtual-list::-webkit-scrollbar-track {
+  display: none;
+}
+
+.local-music-detail .virtual-list:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, .04);
+}
+
+.local-music-detail .fixed-virtual-list-row {
+  contain: layout paint style;
+}
+
+.local-music-detail .list-item {
+  contain: layout paint style;
+  transition: background-color .2s !important;
+}
+
+.local-music-detail .item-singer {
+  transition: opacity .1s !important;
 }

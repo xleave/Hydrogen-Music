@@ -30,9 +30,9 @@ function refreshLocal() {
     </div>
     <div class="type-two">
       <div class="type-option">
-        <span class="option" :class="{'option-selected': listType2 == 0}" @click="changeType(0)">全部</span>
-        <span class="option" :class="{'option-selected': listType2 == 1}" @click="changeType(1)">专辑</span>
-        <span class="option" :class="{'option-selected': listType2 == 2}" @click="changeType(2)">歌手</span>
+        <span class="option" :class="{'option-selected': listType2 === 0}" @click="changeType(0)">全部</span>
+        <span class="option" :class="{'option-selected': listType2 === 1}" @click="changeType(1)">专辑</span>
+        <span class="option" :class="{'option-selected': listType2 === 2}" @click="changeType(2)">歌手</span>
       </div>
       <span class="refresh" @click="refreshLocal()" v-show="localStore.localFolderSettings.length">刷新</span>
     </div>

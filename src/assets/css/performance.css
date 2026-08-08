@@ -1,0 +1,28 @@
+/* Visual-equivalent renderer optimizations for WebKitGTK. */
+
+/* During manual lyric scrolling the component already resolves every lyric
+ * blur amount to zero. `filter: none` produces the same pixels as blur(0),
+ * but avoids keeping a filter surface for each visible text span. */
+.lyric-inactive {
+  filter: none !important;
+}
+
+.lyric-inactive .original,
+.lyric-inactive .trans,
+.lyric-inactive .roma {
+  filter: none !important;
+}
+
+.lyric-area .line:active {
+  filter: none !important;
+}
+
+/* Keep the large cover blur as one stable composited surface. Dimensions,
+ * blur radius, opacity and placement remain unchanged. */
+.music-player .back-drop {
+  contain: paint;
+  backface-visibility: hidden;
+  will-change: transform, filter, opacity;
+  transform: translate3d(-10%, -10%, 0) !important;
+  pointer-events: none;
+}

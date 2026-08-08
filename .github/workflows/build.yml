@@ -6,53 +6,73 @@ on:
       - main
     tags:
       - v*
-jobs:
-  release:
-    name: build and release electron app
-    runs-on: ${{ matrix.os }}
+  workflow_dispatch:
 
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-            
+jobs:
+  verify:
+    name: Verify release commit
+    runs-on: ubuntu-24.04
     steps:
-      - name: Check out git repository
-        uses: actions/checkout@v3.0.0
-      
-      - name: Install Node.js
-        uses: actions/setup-node@v3.0.0
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: "18.12.0"
-          
-      - name: Install Dependencies
-        run: npm install
-        
-      - name: Build Electron App
-        run: npm run dist
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
-    
-      - name: Cleanup Artifacts for Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          npx rimraf "dist/!(*.exe)"
-      
-      - name: Cleanup Artifacts for MacOS
-        if: matrix.os == 'macos-latest'
-        run: |
-          npx rimraf "dist/!(*.dmg)"
-          
-      - name: upload artifacts
-        uses: actions/upload-artifact@v3.0.0
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: ${{ matrix.os }}
-          path: dist
-          
-      - name: release
-        uses: softprops/action-gh-release@v0.1.14
+          components: clippy,rustfmt
+      - name: Install Tauri system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev patchelf
+      - run: npm ci --no-fund
+      - name: Audit runtime npm dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Frontend smoke tests
+        run: npm run test:frontend
+      - name: Build frontend
+        run: npm run build
+      - name: Rust format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - name: Check Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit Rust dependencies
+        run: cargo audit --file src-tauri/Cargo.lock
+
+  fedora-rpm:
+    name: Fedora 42 RPM release
+    needs: verify
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Fedora build dependencies
+        run: >-
+          dnf install -y
+          nodejs npm
+          gcc gcc-c++ make
+          webkit2gtk4.1-devel openssl-devel
+          curl wget file
+          alsa-lib-devel
+          libappindicator-gtk3-devel librsvg2-devel libxdo-devel
+          rpm-build patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci --no-fund
+      - name: Build Fedora RPM
+        run: npm run tauri -- build --bundles rpm
+      - uses: actions/upload-artifact@v6
+        with:
+          name: hydrogen-music-fedora-rpm
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+      - name: Publish tagged release
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: "dist/**"
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          files: src-tauri/target/release/bundle/rpm/*.rpm

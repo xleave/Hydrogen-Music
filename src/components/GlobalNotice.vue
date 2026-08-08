@@ -8,7 +8,7 @@
 
 <template>
   <div class="global-notice" v-show="otherStore.noticeShow">
-    <div class="notice-container" :class="{'notice-container-out': otherStore.niticeOutAnimation}">
+    <div class="notice-container" :class="{'notice-container-out': otherStore.noticeOutAnimation}">
         <div class="notic-text">{{otherStore.noticeText}}</div>
         <div class="notice-border notice-border1"></div>
         <div class="notice-border notice-border2"></div>

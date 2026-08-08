@@ -1,11 +1,12 @@
 {
   "name": "hydrogenmusic",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": "xleave",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:frontend": "node --test tests/frontend-smoke.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "start": "tauri dev",
@@ -16,7 +17,6 @@
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "dayjs": "^1.11.6",
-    "howler": "^2.2.3",
     "nanoid": "^3.3.4",
     "normalize.css": "^8.0.1",
     "pinia": "^2.0.23",

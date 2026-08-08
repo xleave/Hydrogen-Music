@@ -3,8 +3,9 @@ import MyMusic from '../views/MyMusic.vue'
 import LocalMusicDetail from '../components/LocalMusicDetail.vue'
 import Settings from '../views/Settings.vue'
 import { useLocalStore } from '../store/localStore'
+import pinia from '../store/pinia'
 
-const localStore = useLocalStore()
+const localStore = useLocalStore(pinia)
 
 const routes = [
   {
@@ -47,7 +48,18 @@ const routes = [
   },
 ]
 
-export default createRouter({
+const router = createRouter({
   history: createWebHashHistory(),
   routes,
 })
+
+const libraryDetailRoutes = new Set(['localFiles', 'localAlbum', 'localArtist'])
+router.afterEach((to, from) => {
+  if (!libraryDetailRoutes.has(to.name) || to.fullPath === from.fullPath) return
+  requestAnimationFrame(() => {
+    const scroller = document.querySelector('.local-music-detail .virtual-list')
+    if (scroller instanceof HTMLElement) scroller.scrollTop = 0
+  })
+})
+
+export default router

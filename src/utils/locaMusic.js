@@ -1,23 +1,23 @@
 import pinia from '../store/pinia'
 import { useLocalStore } from '../store/localStore'
+import { useLibraryStore } from '../store/libraryStore'
 import { storeToRefs } from 'pinia'
-import { nanoid } from 'nanoid'
 import { noticeOpen } from './dialog'
+import { restorePlaylistFromLibrary } from './player'
 
 const localStore = useLocalStore(pinia)
-const { localMusicFolder, localMusicList, localMusicClassify, isRefreshLocalFile } = storeToRefs(localStore)
+const libraryStore = useLibraryStore(pinia)
+const { isRefreshLocalFile } = storeToRefs(localStore)
 
-// 使用 Map 实现 O(1) 查找，替代原来的 O(n) findIndex
 let artistMap = new Map()
 let albumMap = new Map()
 
 function classifyAdd(song) {
-    // Rust 端已完成艺术家分割，直接使用
     const artists = song.common.artists?.length ? song.common.artists : ['其他']
-    artists.forEach(artist => {
+    artists.forEach((artist) => {
         if (!artistMap.has(artist)) {
             artistMap.set(artist, {
-                id: nanoid(),
+                id: artist,
                 type: 'artist',
                 name: artist,
                 songs: []
@@ -27,22 +27,25 @@ function classifyAdd(song) {
     })
 
     const album = song.common.album || '其他'
-    if (!albumMap.has(album)) {
-        albumMap.set(album, {
-            id: nanoid(),
+    const albumArtist = song.common.albumartist || artists[0] || '其他'
+    const albumId = JSON.stringify([albumArtist, album])
+    if (!albumMap.has(albumId)) {
+        albumMap.set(albumId, {
+            id: albumId,
             type: 'album',
             name: album,
+            albumArtist,
             songs: []
         })
     }
-    albumMap.get(album).songs.push(song)
+    albumMap.get(albumId).songs.push(song)
 }
 
 function classify(arr) {
-    arr.forEach(item => {
+    for (const item of arr || []) {
         if (item.children) classify(item.children)
-        else classifyAdd(item)
-    })
+        else if (item.common) classifyAdd(item)
+    }
     return {
         artists: Array.from(artistMap.values()),
         albums: Array.from(albumMap.values())
@@ -50,24 +53,37 @@ function classify(arr) {
 }
 
 export function scanMusic(params) {
-    if(isRefreshLocalFile.value)
-        noticeOpen("正在扫描本地音乐,请稍等", 3)
-    windowApi.scanLocalMusic(params)
+    if (isRefreshLocalFile.value) noticeOpen('正在扫描本地音乐,请稍等', 3)
+    return windowApi.scanLocalMusic(params).catch((error) => {
+        console.error('[local scan]', error)
+        if (isRefreshLocalFile.value) isRefreshLocalFile.value = false
+        noticeOpen('本地音乐扫描失败', 3)
+    })
 }
+
 windowApi.localMusicCount((event, count) => {
     noticeOpen('已扫描' + count + '首', 2)
 })
+
 windowApi.localMusicFiles((event, localData) => {
-    if(localData.type == 'local') {
-        localMusicFolder.value = localData.dirTree
-        localMusicList.value = localData.locaFilesMetadata
-        // 重置 Map，避免多次扫描累积
+    if (localData.type === 'local') {
         artistMap = new Map()
         albumMap = new Map()
-        localMusicClassify.value = classify(localData.locaFilesMetadata)
+        const classified = classify(localData.locaFilesMetadata)
+        localStore.setLibraryData(localData.dirTree, localData.locaFilesMetadata, classified)
+        libraryStore.clearExpandedFolders()
+        // Cached snapshots are complete by construction. A live scan can be
+        // partial when a removable/NAS root is temporarily unavailable or a
+        // traversal budget is hit; keep the pending queue for a later complete
+        // scan instead of restoring only a subset and consuming it.
+        if (localData.complete !== false) restorePlaylistFromLibrary(localStore.localMusicList)
     }
-    if(isRefreshLocalFile.value) {
-        noticeOpen("扫描完毕 共" + localData.count + '首', 3)
-        isRefreshLocalFile.value = false
+    if (localData.truncated) {
+        noticeOpen('音乐库过大，已达到安全扫描上限', 4)
+    } else if (localData.complete === false) {
+        noticeOpen('部分音乐目录暂不可用，已保留播放恢复状态', 4)
+    } else if (isRefreshLocalFile.value) {
+        noticeOpen('扫描完毕 共' + localData.count + '首', 3)
     }
+    isRefreshLocalFile.value = false
 })
