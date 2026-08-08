@@ -6,6 +6,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+const DEFAULT_MAX_JSON_BYTES: u64 = 64 * 1024 * 1024;
+
 fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let directory = app.path().app_data_dir().map_err(|error| error.to_string())?;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
@@ -18,9 +20,25 @@ fn quarantine_corrupt(path: &Path) {
     let _ = fs::rename(path, corrupt);
 }
 
-pub fn read_json(app: &AppHandle, name: &str, default: Value) -> Result<Value, String> {
+fn is_within_limit(path: &Path, max_bytes: u64) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.len() <= max_bytes)
+        .unwrap_or(false)
+}
+
+pub fn read_json_with_limit(
+    app: &AppHandle,
+    name: &str,
+    default: Value,
+    max_bytes: u64,
+) -> Result<Value, String> {
     let path = data_file(app, name)?;
     if !path.is_file() {
+        write_json(app, name, &default)?;
+        return Ok(default);
+    }
+    if !is_within_limit(&path, max_bytes) {
+        quarantine_corrupt(&path);
         write_json(app, name, &default)?;
         return Ok(default);
     }
@@ -35,9 +53,21 @@ pub fn read_json(app: &AppHandle, name: &str, default: Value) -> Result<Value, S
     }
 }
 
-pub fn read_optional_json(app: &AppHandle, name: &str) -> Result<Option<Value>, String> {
+pub fn read_json(app: &AppHandle, name: &str, default: Value) -> Result<Value, String> {
+    read_json_with_limit(app, name, default, DEFAULT_MAX_JSON_BYTES)
+}
+
+pub fn read_optional_json_with_limit(
+    app: &AppHandle,
+    name: &str,
+    max_bytes: u64,
+) -> Result<Option<Value>, String> {
     let path = data_file(app, name)?;
     if !path.is_file() {
+        return Ok(None);
+    }
+    if !is_within_limit(&path, max_bytes) {
+        quarantine_corrupt(&path);
         return Ok(None);
     }
     let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -48,6 +78,10 @@ pub fn read_optional_json(app: &AppHandle, name: &str) -> Result<Option<Value>, 
             Ok(None)
         }
     }
+}
+
+pub fn read_optional_json(app: &AppHandle, name: &str) -> Result<Option<Value>, String> {
+    read_optional_json_with_limit(app, name, DEFAULT_MAX_JSON_BYTES)
 }
 
 pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), String> {
