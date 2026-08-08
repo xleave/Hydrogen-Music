@@ -85,8 +85,13 @@ function displayAlbum(item) {
 }
 
 function play(id) {
-  const sourceIndex = currentSelectedSongs.value.findIndex((song) => song.id === id)
-  addLocalMusicTOList(router.currentRoute.value.name, currentSelectedSongs.value, id, sourceIndex)
+  // The queue is created from the ordered view the user is actually looking
+  // at. Search results stay scoped to the current result set, and the next
+  // track after a sorted row is the next visible row.
+  const visibleSongs = sortedData.value
+  const visibleIndex = visibleSongs.findIndex((song) => song.id === id)
+  if (visibleIndex < 0) return
+  addLocalMusicTOList(router.currentRoute.value.name, visibleSongs, id, visibleIndex)
   if (playMode.value === 3) setShuffledList()
 }
 
