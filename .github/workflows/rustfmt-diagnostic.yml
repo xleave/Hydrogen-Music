@@ -1,0 +1,26 @@
+name: Rustfmt diagnostic
+
+on:
+  push:
+    branches: ["agent/rust-local-player"]
+
+permissions:
+  contents: read
+
+jobs:
+  rustfmt-diff:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format Rust sources locally in the runner
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Save rustfmt diff
+        run: git diff -- src-tauri > rustfmt.patch
+      - uses: actions/upload-artifact@v6
+        with:
+          name: rustfmt-diff
+          path: rustfmt.patch
+          if-no-files-found: error
