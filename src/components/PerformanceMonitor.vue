@@ -4,6 +4,12 @@ import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useLocalStore } from '../store/localStore'
 import { usePlayerStore } from '../store/playerStore'
+import {
+  getRendererPerformanceMetrics,
+  setRendererPerformanceMonitoring,
+} from '../utils/performanceMonitor'
+
+const MONITOR_STORAGE_KEY = 'hydrogen.performanceMonitor.enabled'
 
 const route = useRoute()
 const localStore = useLocalStore()
@@ -11,7 +17,24 @@ const playerStore = usePlayerStore()
 const { currentSelectedSongs } = storeToRefs(localStore)
 const { songList } = storeToRefs(playerStore)
 
-const expanded = ref(false)
+function readMonitorEnabled() {
+  try {
+    return localStorage.getItem(MONITOR_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function persistMonitorEnabled(value) {
+  try {
+    localStorage.setItem(MONITOR_STORAGE_KEY, value ? '1' : '0')
+  } catch {
+    // Diagnostics must never affect normal application behavior.
+  }
+}
+
+const enabled = ref(readMonitorEnabled())
+const settingsVisible = computed(() => route.name === 'settings')
 const metrics = ref({
   fps: 0,
   averageFrame: 0,
@@ -28,6 +51,7 @@ const metrics = ref({
   audioStatusRate: 0,
   jsHeap: null,
   recentSlow: [],
+  recentRenderer: [],
 })
 
 let frameHandle = null
@@ -38,10 +62,6 @@ let previousIpcTotal = 0
 let previousAudioStatus = 0
 let previousSampleAt = 0
 
-// Collapsed, the control only exists in Settings. Once explicitly expanded it
-// follows the user across routes so a playback/navigation spike can actually
-// be reproduced while the diagnostic session stays alive.
-const visible = computed(() => route.name === 'settings' || expanded.value)
 const selectedCount = computed(() => currentSelectedSongs.value?.length || 0)
 const queueCount = computed(() => songList.value?.length || 0)
 
@@ -81,6 +101,7 @@ function updateMetrics() {
     : 0
 
   const ipc = windowApi.getPerformanceMetrics?.() || {}
+  const renderer = getRendererPerformanceMetrics()
   const byCommand = ipc.byCommand || {}
   const totalCalls = Number(ipc.totalCalls || 0)
   const audioStatusCalls = Number(byCommand.audio_status?.calls || 0)
@@ -105,6 +126,10 @@ function updateMetrics() {
       .filter((item) => item.durationMs >= 8)
       .slice(-6)
       .reverse(),
+    recentRenderer: (renderer.recent || [])
+      .filter((item) => item.durationMs >= 4)
+      .slice(-5)
+      .reverse(),
   }
 
   previousIpcTotal = totalCalls
@@ -114,6 +139,7 @@ function updateMetrics() {
 function startMonitoring() {
   if (frameHandle !== null) return
   windowApi.setPerformanceMonitoring?.(true)
+  setRendererPerformanceMonitoring(true)
   previousIpcTotal = 0
   previousAudioStatus = 0
   previousSampleAt = performance.now()
@@ -132,29 +158,38 @@ function stopMonitoring() {
   lastFrame = 0
   frameDurations = []
   windowApi.setPerformanceMonitoring?.(false)
+  setRendererPerformanceMonitoring(false)
 }
 
-function toggleMonitor() {
-  expanded.value = !expanded.value
+function toggleMonitoring() {
+  enabled.value = !enabled.value
 }
 
-watch(expanded, (value) => {
+watch(enabled, (value) => {
+  persistMonitorEnabled(value)
   if (value) startMonitoring()
   else stopMonitoring()
-})
+}, { immediate: true })
 
 onBeforeUnmount(stopMonitoring)
 </script>
 
 <template>
-  <div v-if="visible" class="performance-monitor" :class="{ 'performance-monitor-open': expanded }">
-    <button class="monitor-header" type="button" @click="toggleMonitor">
-      <span>性能监测</span>
-      <span class="monitor-state">{{ expanded ? '收起' : '展开' }}</span>
+  <div v-if="settingsVisible" class="monitor-setting-control">
+    <span class="monitor-setting-label">性能监测</span>
+    <button class="monitor-switch" type="button" :class="{ 'monitor-switch-on': enabled }" @click="toggleMonitoring">
+      {{ enabled ? '已开启' : '已关闭' }}
     </button>
+  </div>
 
-    <div v-if="expanded" class="monitor-body">
-      <div class="monitor-note">仅展开时采样；展开后可跨页面复现播放、滚动和切页卡顿。</div>
+  <div v-if="enabled" class="performance-monitor" :class="{ 'performance-monitor-settings': settingsVisible }">
+    <div class="monitor-header">
+      <span>性能监测</span>
+      <span class="monitor-state">常驻</span>
+    </div>
+
+    <div class="monitor-body">
+      <div class="monitor-note">关闭设置页后仍持续采样；可直接复现播放、滚动和切页卡顿。</div>
 
       <div class="metric-section">
         <div class="metric-title">FRAME</div>
@@ -177,6 +212,13 @@ onBeforeUnmount(stopMonitoring)
           <div><span>当前列表</span><b>{{ selectedCount }}</b></div>
           <div><span>播放队列</span><b>{{ queueCount }}</b></div>
           <div><span>JS Heap</span><b>{{ formatBytes(metrics.jsHeap) }}</b></div>
+        </div>
+        <div v-if="metrics.recentRenderer.length" class="slow-list">
+          <div class="slow-title">最近 Renderer 任务</div>
+          <div v-for="(item, index) in metrics.recentRenderer" :key="`${item.name}-${item.finishedAt}-${index}`" class="slow-row">
+            <span>{{ item.name }}</span>
+            <b>{{ item.durationMs.toFixed(1) }} ms</b>
+          </div>
         </div>
       </div>
 
@@ -201,30 +243,59 @@ onBeforeUnmount(stopMonitoring)
 </template>
 
 <style scoped lang="scss">
+.monitor-setting-control {
+  position: fixed;
+  right: 10%;
+  bottom: 22Px;
+  z-index: 1199;
+  display: flex;
+  align-items: center;
+  gap: 18Px;
+
+  .monitor-setting-label {
+    font: 14Px SourceHanSansCN-Bold;
+    color: black;
+  }
+
+  .monitor-switch {
+    width: 200Px;
+    height: 34Px;
+    padding: 5Px 10Px;
+    border: 0;
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, .35);
+    color: black;
+    font: 13Px SourceHanSansCN-Bold;
+    line-height: 24Px;
+    cursor: pointer;
+    transition: opacity .2s, background-color .2s, color .2s;
+
+    &:hover { opacity: .8; }
+    &.monitor-switch-on { background: black; color: white; }
+  }
+}
+
 .performance-monitor {
   position: fixed;
   right: 9.5%;
   bottom: 22Px;
   z-index: 1200;
-  width: 190Px;
+  width: 430Px;
   background: rgba(225, 240, 240, .96);
   box-shadow: 0 0 0 .5Px rgba(0, 0, 0, .24), 0 8Px 24Px rgba(0, 0, 0, .08);
-  transition: width .25s cubic-bezier(.19,.8,.49,.99);
 
-  &.performance-monitor-open { width: 430Px; }
+  &.performance-monitor-settings { bottom: 72Px; }
 
   .monitor-header {
     width: 100%;
     height: 34Px;
     padding: 0 12Px;
-    border: 0;
-    background: transparent;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: space-between;
     color: black;
     font: 12Px SourceHanSansCN-Bold;
-    cursor: pointer;
     text-align: left;
 
     .monitor-state {
