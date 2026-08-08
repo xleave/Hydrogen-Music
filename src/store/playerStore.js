@@ -34,6 +34,7 @@ export const usePlayerStore = defineStore('playerStore', {
             coverBlur: false,
             lyricBlur: false,
             coverUrl: null,
+            coverBackdropUrl: null,
         }
     },
     getters: {
