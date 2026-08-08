@@ -146,12 +146,12 @@
 
   .widget-enter-active,
   .widget-leave-active {
-    transition: 0.5s cubic-bezier(.14,.91,.58,1);
+    transition: transform 0.5s cubic-bezier(.14,.91,.58,1);
   }
 
   .widget-enter-from,
   .widget-leave-to {
-    bottom: -70Px;
+    transform: translate(-50%, 105Px);
   }
 
   .player-enter-active,
