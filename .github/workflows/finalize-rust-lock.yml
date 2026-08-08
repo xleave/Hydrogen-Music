@@ -1,0 +1,40 @@
+name: Finalize Rust lockfile
+
+on:
+  push:
+    branches: ["agent/rust-local-player"]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify hardening, resolve lockfile, and self-clean
+        run: |
+          sleep 25
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin agent/rust-local-player
+          grep -q "Native ownership prevents a WebView reload" src-tauri/src/lib.rs
+          grep -q "persist_native_snapshot_bounded" src-tauri/src/lib.rs
+          grep -q "invoke('scan_local_music')" src/platform/windowApi.js
+          cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 > /dev/null
+          rm -f .github/workflows/apply-native-scan-generation.yml
+          rm -f .github/workflows/finalize-native-scan-generation.yml
+          rm -f .github/workflows/finalize-core-hardening.yml
+          rm -f .github/workflows/finalize-rust-lock.yml
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: finalize hardened Rust dependency lockfile"
+            for attempt in 1 2 3; do
+              if git push; then exit 0; fi
+              sleep 3
+              git pull --rebase origin agent/rust-local-player
+            done
+            exit 1
+          fi
