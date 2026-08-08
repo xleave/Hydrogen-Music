@@ -1,11 +1,13 @@
 import pinia from '../store/pinia'
 import { useLocalStore } from '../store/localStore'
+import { useLibraryStore } from '../store/libraryStore'
 import { storeToRefs } from 'pinia'
 import { noticeOpen } from './dialog'
 import { restorePlaylistFromLibrary } from './player'
 
 const localStore = useLocalStore(pinia)
-const { localDirectoryTree, localMusicList, localMusicClassify, isRefreshLocalFile } = storeToRefs(localStore)
+const libraryStore = useLibraryStore(pinia)
+const { isRefreshLocalFile } = storeToRefs(localStore)
 
 let artistMap = new Map()
 let albumMap = new Map()
@@ -65,16 +67,16 @@ windowApi.localMusicCount((event, count) => {
 
 windowApi.localMusicFiles((event, localData) => {
     if (localData.type === 'local') {
-        localDirectoryTree.value = localData.dirTree
-        localMusicList.value = localData.locaFilesMetadata
         artistMap = new Map()
         albumMap = new Map()
-        localMusicClassify.value = classify(localData.locaFilesMetadata)
+        const classified = classify(localData.locaFilesMetadata)
+        localStore.setLibraryData(localData.dirTree, localData.locaFilesMetadata, classified)
+        libraryStore.clearExpandedFolders()
         // Cached snapshots are complete by construction. A live scan can be
         // partial when a removable/NAS root is temporarily unavailable or a
         // traversal budget is hit; keep the pending queue for a later complete
         // scan instead of restoring only a subset and consuming it.
-        if (localData.complete !== false) restorePlaylistFromLibrary(localMusicList.value)
+        if (localData.complete !== false) restorePlaylistFromLibrary(localStore.localMusicList)
     }
     if (localData.truncated) {
         noticeOpen('音乐库过大，已达到安全扫描上限', 4)
