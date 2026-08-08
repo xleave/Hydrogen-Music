@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 
@@ -7,6 +7,76 @@ let scanRequestId = 0
 let exiting = false
 let localShortcuts = []
 let localShortcutListenerInstalled = false
+let performanceMonitoring = false
+let performanceStartedAt = 0
+let performanceTotalCalls = 0
+let performanceActiveCalls = 0
+let performanceMaxActiveCalls = 0
+let performanceByCommand = new Map()
+let performanceRecent = []
+
+function nowMs() {
+  return globalThis.performance?.now?.() ?? Date.now()
+}
+
+function resetPerformanceMetrics() {
+  performanceStartedAt = nowMs()
+  performanceTotalCalls = 0
+  performanceActiveCalls = 0
+  performanceMaxActiveCalls = 0
+  performanceByCommand = new Map()
+  performanceRecent = []
+}
+
+function setPerformanceMonitoring(enabled) {
+  performanceMonitoring = Boolean(enabled)
+  resetPerformanceMetrics()
+}
+
+function getPerformanceMetrics() {
+  const byCommand = {}
+  for (const [command, stats] of performanceByCommand.entries()) {
+    byCommand[command] = { ...stats }
+  }
+  return {
+    elapsedMs: Math.max(0, nowMs() - performanceStartedAt),
+    totalCalls: performanceTotalCalls,
+    activeCalls: performanceActiveCalls,
+    maxActiveCalls: performanceMaxActiveCalls,
+    byCommand,
+    recent: performanceRecent.map((item) => ({ ...item })),
+  }
+}
+
+async function invoke(command, args) {
+  if (!performanceMonitoring) return tauriInvoke(command, args)
+
+  const startedAt = nowMs()
+  performanceTotalCalls += 1
+  performanceActiveCalls += 1
+  performanceMaxActiveCalls = Math.max(performanceMaxActiveCalls, performanceActiveCalls)
+
+  const commandStats = performanceByCommand.get(command) || {
+    calls: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    lastDurationMs: 0,
+  }
+  commandStats.calls += 1
+  performanceByCommand.set(command, commandStats)
+
+  try {
+    return await tauriInvoke(command, args)
+  } finally {
+    const durationMs = Math.max(0, nowMs() - startedAt)
+    performanceActiveCalls = Math.max(0, performanceActiveCalls - 1)
+    commandStats.totalDurationMs += durationMs
+    commandStats.maxDurationMs = Math.max(commandStats.maxDurationMs, durationMs)
+    commandStats.lastDurationMs = durationMs
+    performanceRecent.push({ command, durationMs, finishedAt: Date.now() })
+    if (performanceRecent.length > 24) performanceRecent.splice(0, performanceRecent.length - 24)
+  }
+}
 
 function subscribe(name, callback) {
   if (!callbacks.has(name)) callbacks.set(name, new Set())
@@ -214,9 +284,12 @@ export function installWindowApi() {
     changeTrayMusicPlaymode: noop,
     registerShortcuts,
     unregisterShortcuts,
+    setPerformanceMonitoring,
+    getPerformanceMetrics,
   }
 
   return async () => {
+    setPerformanceMonitoring(false)
     clearLocalShortcuts()
     callbacks.clear()
     await invoke('unregister_shortcuts').catch(() => {})
