@@ -4,12 +4,20 @@ use lofty::{
     tag::{Accessor, ItemKey},
 };
 use rayon::prelude::*;
-use serde::Serialize;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Mutex,
+    },
 };
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 pub const STALE_SCAN: &str = "stale music scan";
 const AUDIO_EXTENSIONS: &[&str] = &[
@@ -33,7 +41,7 @@ pub struct ScanResult {
     truncated: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Node {
     name: String,
@@ -50,7 +58,7 @@ struct Node {
     format: Option<FormatMetadata>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommonMetadata {
     local_title: String,
@@ -66,7 +74,7 @@ struct CommonMetadata {
     modified_at: Option<u64>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FormatMetadata {
     bitrate: Option<u32>,
@@ -74,6 +82,48 @@ struct FormatMetadata {
     container: String,
     duration: f64,
     sample_rate: Option<u32>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Fingerprint {
+    size: u64,
+    modified_ms: u64,
+    lrc_size: u64,
+    lrc_modified_ms: u64,
+}
+
+#[derive(Clone)]
+struct CachedTrack {
+    fingerprint: Fingerprint,
+    node: Node,
+}
+
+struct ScanCache {
+    entries: HashMap<String, CachedTrack>,
+    updates: Mutex<Vec<(String, CachedTrack)>>,
+    seen: Mutex<HashSet<String>>,
+}
+
+impl ScanCache {
+    fn new(entries: HashMap<String, CachedTrack>) -> Self {
+        Self {
+            entries,
+            updates: Mutex::new(Vec::new()),
+            seen: Mutex::new(HashSet::new()),
+        }
+    }
+
+    fn remember_seen(&self, path: &str) {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.insert(path.to_owned());
+        }
+    }
+
+    fn queue_update(&self, path: String, entry: CachedTrack) {
+        if let Ok(mut updates) = self.updates.lock() {
+            updates.push((path, entry));
+        }
+    }
 }
 
 struct ScanBudget {
@@ -120,9 +170,16 @@ pub fn scan(
     folders: &[PathBuf],
     request_id: u64,
     latest_request_id: &AtomicU64,
+    index_path: &Path,
 ) -> Result<ScanResult, String> {
     ensure_current(request_id, latest_request_id)?;
+    let cache_entries = load_index(index_path).unwrap_or_else(|error| {
+        eprintln!("[library index] ignoring cache: {error}");
+        HashMap::new()
+    });
+    let cache = ScanCache::new(cache_entries);
     let budget = ScanBudget::new();
+
     let roots: Result<Vec<Option<(Node, usize)>>, String> = folders
         .par_iter()
         .map(|folder| {
@@ -141,7 +198,14 @@ pub fn scan(
             if !budget.reserve_directory() {
                 return Ok(None);
             }
-            match scan_directory(&root, 0, request_id, latest_request_id, &budget) {
+            match scan_directory(
+                &root,
+                0,
+                request_id,
+                latest_request_id,
+                &budget,
+                &cache,
+            ) {
                 Ok(result) => Ok(Some(result)),
                 Err(error) if error == STALE_SCAN => Err(error),
                 Err(error) => {
@@ -157,6 +221,10 @@ pub fn scan(
     let count = results.iter().map(|(_, c)| c).sum();
     let metadata_roots: Vec<Node> = results.into_iter().map(|(n, _)| n).collect();
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
+
+    if let Err(error) = persist_index(index_path, &cache) {
+        eprintln!("[library index] failed to persist cache: {error}");
+    }
 
     Ok(ScanResult {
         dir_tree,
@@ -180,6 +248,7 @@ fn scan_directory(
     request_id: u64,
     latest_request_id: &AtomicU64,
     budget: &ScanBudget,
+    cache: &ScanCache,
 ) -> Result<(Node, usize), String> {
     ensure_current(request_id, latest_request_id)?;
     if depth > MAX_SCAN_DEPTH {
@@ -228,7 +297,14 @@ fn scan_directory(
     let mut count = 0usize;
     for sub in sub_dirs {
         ensure_current(request_id, latest_request_id)?;
-        match scan_directory(&sub, depth + 1, request_id, latest_request_id, budget) {
+        match scan_directory(
+            &sub,
+            depth + 1,
+            request_id,
+            latest_request_id,
+            budget,
+            cache,
+        ) {
             Ok((node, child_count)) => {
                 count += child_count;
                 children.push(node);
@@ -245,7 +321,7 @@ fn scan_directory(
             if latest_request_id.load(Ordering::Acquire) != request_id {
                 return None;
             }
-            Some(read_track(audio_path).unwrap_or_else(|_| fallback_track(audio_path)))
+            Some(read_track_cached(audio_path, cache))
         })
         .collect();
 
@@ -294,11 +370,201 @@ fn fnv1a(bytes: impl Iterator<Item = u8>, mut hash: u64) -> u64 {
 }
 
 fn stable_track_id(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    let bytes = text.as_bytes();
+    #[cfg(unix)]
+    let bytes = path.as_os_str().as_bytes();
+    #[cfg(not(unix))]
+    let owned = path.to_string_lossy().into_owned();
+    #[cfg(not(unix))]
+    let bytes = owned.as_bytes();
+
     let first = fnv1a(bytes.iter().copied(), 0xcbf29ce484222325);
     let second = fnv1a(bytes.iter().rev().copied(), 0x84222325cbf29ce4);
     format!("track:{first:016x}{second:016x}")
+}
+
+fn modified_ms(metadata: &fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn fingerprint(path: &Path) -> Option<Fingerprint> {
+    let metadata = fs::metadata(path).ok()?;
+    let lrc = fs::metadata(path.with_extension("lrc")).ok();
+    Some(Fingerprint {
+        size: metadata.len(),
+        modified_ms: modified_ms(&metadata),
+        lrc_size: lrc.as_ref().map(fs::Metadata::len).unwrap_or(0),
+        lrc_modified_ms: lrc.as_ref().map(modified_ms).unwrap_or(0),
+    })
+}
+
+fn read_track_cached(path: &Path, cache: &ScanCache) -> Node {
+    let path_string = path.to_string_lossy().into_owned();
+    cache.remember_seen(&path_string);
+
+    if let Some(current) = fingerprint(path) {
+        if let Some(cached) = cache.entries.get(&path_string) {
+            if cached.fingerprint == current {
+                return cached.node.clone();
+            }
+        }
+
+        let node = read_track(path).unwrap_or_else(|_| fallback_track(path));
+        cache.queue_update(
+            path_string,
+            CachedTrack {
+                fingerprint: current,
+                node: node.clone(),
+            },
+        );
+        return node;
+    }
+
+    fallback_track(path)
+}
+
+fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let connection = Connection::open(path).map_err(|error| error.to_string())?;
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             CREATE TABLE IF NOT EXISTS tracks (
+                 path TEXT PRIMARY KEY NOT NULL,
+                 size INTEGER NOT NULL,
+                 modified_ms INTEGER NOT NULL,
+                 lrc_size INTEGER NOT NULL,
+                 lrc_modified_ms INTEGER NOT NULL,
+                 node_json TEXT NOT NULL
+             );",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT path, size, modified_ms, lrc_size, lrc_modified_ms, node_json FROM tracks",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            let path: String = row.get(0)?;
+            let size: i64 = row.get(1)?;
+            let modified_ms: i64 = row.get(2)?;
+            let lrc_size: i64 = row.get(3)?;
+            let lrc_modified_ms: i64 = row.get(4)?;
+            let node_json: String = row.get(5)?;
+            Ok((path, size, modified_ms, lrc_size, lrc_modified_ms, node_json))
+        })
+        .map_err(|error| error.to_string())?;
+
+    let mut cache = HashMap::new();
+    for row in rows {
+        let Ok((path, size, modified_ms, lrc_size, lrc_modified_ms, node_json)) = row else {
+            continue;
+        };
+        let Ok(node) = serde_json::from_str::<Node>(&node_json) else {
+            continue;
+        };
+        if size < 0 || modified_ms < 0 || lrc_size < 0 || lrc_modified_ms < 0 {
+            continue;
+        }
+        cache.insert(
+            path,
+            CachedTrack {
+                fingerprint: Fingerprint {
+                    size: size as u64,
+                    modified_ms: modified_ms as u64,
+                    lrc_size: lrc_size as u64,
+                    lrc_modified_ms: lrc_modified_ms as u64,
+                },
+                node,
+            },
+        );
+    }
+    Ok(cache)
+}
+
+fn persist_index(path: &Path, cache: &ScanCache) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut connection = Connection::open(path).map_err(|error| error.to_string())?;
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             CREATE TABLE IF NOT EXISTS tracks (
+                 path TEXT PRIMARY KEY NOT NULL,
+                 size INTEGER NOT NULL,
+                 modified_ms INTEGER NOT NULL,
+                 lrc_size INTEGER NOT NULL,
+                 lrc_modified_ms INTEGER NOT NULL,
+                 node_json TEXT NOT NULL
+             );",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let updates = cache
+        .updates
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let seen = cache
+        .seen
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let stale: Vec<String> = cache
+        .entries
+        .keys()
+        .filter(|path| !seen.contains(*path))
+        .cloned()
+        .collect();
+
+    let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    {
+        let mut upsert = transaction
+            .prepare_cached(
+                "INSERT INTO tracks(path, size, modified_ms, lrc_size, lrc_modified_ms, node_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(path) DO UPDATE SET
+                    size=excluded.size,
+                    modified_ms=excluded.modified_ms,
+                    lrc_size=excluded.lrc_size,
+                    lrc_modified_ms=excluded.lrc_modified_ms,
+                    node_json=excluded.node_json",
+            )
+            .map_err(|error| error.to_string())?;
+        for (path, entry) in updates {
+            let node_json = serde_json::to_string(&entry.node).map_err(|error| error.to_string())?;
+            upsert
+                .execute(params![
+                    path,
+                    entry.fingerprint.size as i64,
+                    entry.fingerprint.modified_ms as i64,
+                    entry.fingerprint.lrc_size as i64,
+                    entry.fingerprint.lrc_modified_ms as i64,
+                    node_json,
+                ])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    {
+        let mut delete = transaction
+            .prepare_cached("DELETE FROM tracks WHERE path = ?1")
+            .map_err(|error| error.to_string())?;
+        for path in stale {
+            delete.execute([path]).map_err(|error| error.to_string())?;
+        }
+    }
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn read_track(path: &Path) -> Result<Node, String> {
@@ -385,11 +651,7 @@ fn read_track(path: &Path) -> Result<Node, String> {
             genre,
             year,
             has_lyrics,
-            modified_at: fs::metadata(path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64),
+            modified_at: fs::metadata(path).ok().map(|metadata| modified_ms(&metadata)),
         }),
         format: Some(FormatMetadata {
             bitrate: properties.audio_bitrate().map(|v| v * 1000),
@@ -435,11 +697,7 @@ fn fallback_track(path: &Path) -> Node {
             genre: Vec::new(),
             year: None,
             has_lyrics: path.with_extension("lrc").is_file(),
-            modified_at: fs::metadata(path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64),
+            modified_at: fs::metadata(path).ok().map(|metadata| modified_ms(&metadata)),
         }),
         format: Some(FormatMetadata {
             bitrate: None,
