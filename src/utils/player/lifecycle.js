@@ -1,6 +1,6 @@
 import { playerRefs, otherStore } from './state'
 import { flushSettings } from '../initApp'
-import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, registerPlaybackCheckpointHandler, startMusic, stopProgress } from './playback'
+import { changeProgress, changeProgressByDragEnd, changeProgressByDragStart, pauseMusic, registerPlaybackCheckpointHandler, startMusic, stopMusic, stopProgress } from './playback'
 import { applyPlayMode, playLast, playNext, savePlaylist } from './playlist'
 
 const { currentMusic, playMode, playing, playlistWidgetShow, progress, volume } = playerRefs
@@ -21,14 +21,7 @@ function handleSystemMediaControl(command) {
   switch (command.action) {
     case 'play': startMusic(); break
     case 'pause': pauseMusic(); break
-    case 'stop':
-      pauseMusic()
-      if (currentMusic.value) {
-        progress.value = 0
-        currentMusic.value.seek(0)
-      }
-      windowApi.setSystemMediaStopped().catch((error) => console.error('[media.stop]', error))
-      break
+    case 'stop': stopMusic(); break
     case 'toggle': playing.value ? pauseMusic() : startMusic(); break
     case 'next': playNext(); break
     case 'previous': playLast(); break
@@ -108,8 +101,6 @@ export function initializePlayerLifecycle() {
     navigator.mediaSession.setActionHandler('play', startMusic)
     navigator.mediaSession.setActionHandler('pause', pauseMusic)
   }
-  // The application starts with no native track loaded. A restored track will
-  // transition MPRIS to Paused only after the Rust player has actually loaded it.
   windowApi.setSystemMediaStopped().catch((error) => console.error('[media.initial-state]', error))
   windowApi.setSystemMediaVolume(volume.value)
   windowApi.changeTrayMusicPlaymode(playMode.value)
