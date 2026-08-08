@@ -70,10 +70,16 @@ windowApi.localMusicFiles((event, localData) => {
         artistMap = new Map()
         albumMap = new Map()
         localMusicClassify.value = classify(localData.locaFilesMetadata)
-        restorePlaylistFromLibrary(localMusicList.value)
+        // Cached snapshots are complete by construction. A live scan can be
+        // partial when a removable/NAS root is temporarily unavailable or a
+        // traversal budget is hit; keep the pending queue for a later complete
+        // scan instead of restoring only a subset and consuming it.
+        if (localData.complete !== false) restorePlaylistFromLibrary(localMusicList.value)
     }
     if (localData.truncated) {
         noticeOpen('音乐库过大，已达到安全扫描上限', 4)
+    } else if (localData.complete === false) {
+        noticeOpen('部分音乐目录暂不可用，已保留播放恢复状态', 4)
     } else if (isRefreshLocalFile.value) {
         noticeOpen('扫描完毕 共' + localData.count + '首', 3)
     }
