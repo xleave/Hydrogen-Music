@@ -63,7 +63,11 @@ impl AudioState {
         self.load_generation.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn rebuild_output_if_needed(&self, core: &mut AudioCore, duration: Duration) -> Result<(), String> {
+    fn rebuild_output_if_needed(
+        &self,
+        core: &mut AudioCore,
+        duration: Duration,
+    ) -> Result<(), String> {
         if core.output.is_some() && !self.device_faulted.load(Ordering::Acquire) {
             return Ok(());
         }

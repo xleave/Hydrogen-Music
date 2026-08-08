@@ -135,12 +135,12 @@ mod platform {
             MediaControlEvent::Toggle => emit(app, "toggle", None),
             MediaControlEvent::Next => emit(app, "next", None),
             MediaControlEvent::Previous => emit(app, "previous", None),
-            MediaControlEvent::Seek(direction) => {
-                emit(app, "seekBy", Some(delta(direction, 5.0)))
-            }
-            MediaControlEvent::SeekBy(direction, duration) => {
-                emit(app, "seekBy", Some(delta(direction, duration.as_secs_f64())))
-            }
+            MediaControlEvent::Seek(direction) => emit(app, "seekBy", Some(delta(direction, 5.0))),
+            MediaControlEvent::SeekBy(direction, duration) => emit(
+                app,
+                "seekBy",
+                Some(delta(direction, duration.as_secs_f64())),
+            ),
             MediaControlEvent::SetPosition(position) => {
                 emit(app, "seek", Some(position.0.as_secs_f64()))
             }
@@ -171,18 +171,30 @@ mod platform {
     pub struct MediaState;
 
     impl MediaState {
-        pub fn new(_app: &AppHandle) -> Self { Self }
+        pub fn new(_app: &AppHandle) -> Self {
+            Self
+        }
         pub fn set_metadata(
             &self,
             _title: &str,
             _artist: &str,
             _album: &str,
             _duration: f64,
-        ) -> Result<(), String> { Ok(()) }
-        pub fn set_playback(&self, _playing: bool, _position: f64) -> Result<(), String> { Ok(()) }
-        pub fn set_stopped(&self) -> Result<(), String> { Ok(()) }
-        pub fn clear(&self) -> Result<(), String> { Ok(()) }
-        pub fn set_volume(&self, _volume: f64) -> Result<(), String> { Ok(()) }
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        pub fn set_playback(&self, _playing: bool, _position: f64) -> Result<(), String> {
+            Ok(())
+        }
+        pub fn set_stopped(&self) -> Result<(), String> {
+            Ok(())
+        }
+        pub fn clear(&self) -> Result<(), String> {
+            Ok(())
+        }
+        pub fn set_volume(&self, _volume: f64) -> Result<(), String> {
+            Ok(())
+        }
     }
 }
 

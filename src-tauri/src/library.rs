@@ -21,8 +21,8 @@ use std::os::unix::ffi::OsStrExt;
 
 pub const STALE_SCAN: &str = "stale music scan";
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "wav", "aac", "m4a", "ogg", "opus", "wma", "ape", "alac", "aiff",
-    "mp2", "mpc", "wv", "speex",
+    "mp3", "flac", "wav", "aac", "m4a", "ogg", "opus", "wma", "ape", "alac", "aiff", "mp2", "mpc",
+    "wv", "speex",
 ];
 const MAX_SCAN_DEPTH: usize = 128;
 const MAX_TRACKS: usize = 100_000;
@@ -229,14 +229,7 @@ pub fn scan(
             if !budget.reserve_directory() {
                 return Ok(None);
             }
-            match scan_directory(
-                &root,
-                0,
-                request_id,
-                latest_request_id,
-                &budget,
-                &cache,
-            ) {
+            match scan_directory(&root, 0, request_id, latest_request_id, &budget, &cache) {
                 Ok(result) => Ok(Some(result)),
                 Err(error) if error == STALE_SCAN => Err(error),
                 Err(error) => {
@@ -323,7 +316,10 @@ fn scan_directory(
             Ok(file_type) => file_type,
             Err(error) => {
                 budget.mark_incomplete();
-                eprintln!("[library scan] 无法读取 {} 的文件类型: {error}", entry.path().display());
+                eprintln!(
+                    "[library scan] 无法读取 {} 的文件类型: {error}",
+                    entry.path().display()
+                );
                 continue;
             }
         };
@@ -501,9 +497,7 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
         .map_err(|error| error.to_string())?;
 
     let mut statement = connection
-        .prepare(
-            "SELECT path, size, modified_ms, lrc_size, lrc_modified_ms, node_json FROM tracks",
-        )
+        .prepare("SELECT path, size, modified_ms, lrc_size, lrc_modified_ms, node_json FROM tracks")
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
@@ -513,7 +507,14 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
             let lrc_size: i64 = row.get(3)?;
             let lrc_modified_ms: i64 = row.get(4)?;
             let node_json: String = row.get(5)?;
-            Ok((path, size, modified_ms, lrc_size, lrc_modified_ms, node_json))
+            Ok((
+                path,
+                size,
+                modified_ms,
+                lrc_size,
+                lrc_modified_ms,
+                node_json,
+            ))
         })
         .map_err(|error| error.to_string())?;
 
@@ -585,7 +586,9 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
         Vec::new()
     };
 
-    let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
     {
         let mut upsert = transaction
             .prepare_cached(
@@ -600,7 +603,8 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
             )
             .map_err(|error| error.to_string())?;
         for (path, entry) in updates {
-            let node_json = serde_json::to_string(&entry.node).map_err(|error| error.to_string())?;
+            let node_json =
+                serde_json::to_string(&entry.node).map_err(|error| error.to_string())?;
             upsert
                 .execute(params![
                     path,
@@ -625,16 +629,10 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
 }
 
 fn read_track(path: &Path) -> Result<Node, String> {
-    let tagged = read_from_path(path)
-        .map_err(|e| format!("无法解析 {}: {e}", path.display()))?;
+    let tagged = read_from_path(path).map_err(|e| format!("无法解析 {}: {e}", path.display()))?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
-    let local_title = bounded_text(
-        &path
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy(),
-    );
+    let local_title = bounded_text(&path.file_stem().unwrap_or_default().to_string_lossy());
 
     let title = tag
         .and_then(Accessor::title)
@@ -665,7 +663,9 @@ fn read_track(path: &Path) -> Result<Node, String> {
         t.get_string(ItemKey::Lyrics).is_some() || t.get_string(ItemKey::UnsyncLyrics).is_some()
     }) || path.with_extension("lrc").is_file();
 
-    let date = tag.and_then(Accessor::date).map(|v| bounded_text(&v.to_string()));
+    let date = tag
+        .and_then(Accessor::date)
+        .map(|v| bounded_text(&v.to_string()));
     let year = date
         .as_deref()
         .and_then(|v| v.get(..4))
@@ -708,7 +708,9 @@ fn read_track(path: &Path) -> Result<Node, String> {
             genre,
             year,
             has_lyrics,
-            modified_at: fs::metadata(path).ok().map(|metadata| modified_ms(&metadata)),
+            modified_at: fs::metadata(path)
+                .ok()
+                .map(|metadata| modified_ms(&metadata)),
         }),
         format: Some(FormatMetadata {
             bitrate: properties.audio_bitrate().map(|v| v * 1000),
@@ -721,12 +723,7 @@ fn read_track(path: &Path) -> Result<Node, String> {
 }
 
 fn fallback_track(path: &Path) -> Node {
-    let local_title = bounded_text(
-        &path
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy(),
-    );
+    let local_title = bounded_text(&path.file_stem().unwrap_or_default().to_string_lossy());
     let file_path = path.to_string_lossy().into_owned();
     let container = path
         .extension()
@@ -754,7 +751,9 @@ fn fallback_track(path: &Path) -> Node {
             genre: Vec::new(),
             year: None,
             has_lyrics: path.with_extension("lrc").is_file(),
-            modified_at: fs::metadata(path).ok().map(|metadata| modified_ms(&metadata)),
+            modified_at: fs::metadata(path)
+                .ok()
+                .map(|metadata| modified_ms(&metadata)),
         }),
         format: Some(FormatMetadata {
             bitrate: None,

@@ -181,10 +181,7 @@ fn sanitize_shortcuts(value: Option<&Value>) -> Value {
             let id = bounded_text(object.get("id")?.as_str()?, 64);
             let name = bounded_text(object.get("name")?.as_str()?, 128);
             let shortcut = bounded_text(
-                object
-                    .get("shortcut")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
+                object.get("shortcut").and_then(Value::as_str).unwrap_or(""),
                 128,
             );
             let global = bounded_text(
@@ -373,31 +370,19 @@ async fn select_local_folder(
     }
     let selected = std::fs::canonicalize(selected).map_err(|error| error.to_string())?;
 
-    let mut next = state
-        .0
-        .read()
-        .map_err(|error| error.to_string())?
-        .clone();
+    let mut next = state.0.read().map_err(|error| error.to_string())?.clone();
     let mut folders = stored_music_folders_from_value(&next);
     if !folders.contains(&selected) {
         folders.push(selected.clone());
     }
     replace_local_folders(&mut next, &folders)?;
-    write_json_async(
-        app,
-        persistence.0.clone(),
-        "settings.json",
-        next.clone(),
-    )
-    .await?;
+    write_json_async(app, persistence.0.clone(), "settings.json", next.clone()).await?;
     *state.0.write().map_err(|error| error.to_string())? = next;
     Ok(Some(selected.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
-async fn get_cached_library(
-    settings: State<'_, SettingsState>,
-) -> Result<Option<Value>, String> {
+async fn get_cached_library(settings: State<'_, SettingsState>) -> Result<Option<Value>, String> {
     let stored = settings
         .0
         .read()
@@ -478,15 +463,18 @@ fn cover_dimensions(data: &[u8]) -> Option<(u32, u32)> {
             if cursor + 2 > data.len() {
                 break;
             }
-            let segment_len = u16::from_be_bytes(data[cursor..cursor + 2].try_into().ok()?) as usize;
+            let segment_len =
+                u16::from_be_bytes(data[cursor..cursor + 2].try_into().ok()?) as usize;
             if segment_len < 2 || cursor + segment_len > data.len() {
                 break;
             }
             if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf)
                 && segment_len >= 7
             {
-                let height = u16::from_be_bytes(data[cursor + 3..cursor + 5].try_into().ok()?) as u32;
-                let width = u16::from_be_bytes(data[cursor + 5..cursor + 7].try_into().ok()?) as u32;
+                let height =
+                    u16::from_be_bytes(data[cursor + 3..cursor + 5].try_into().ok()?) as u32;
+                let width =
+                    u16::from_be_bytes(data[cursor + 5..cursor + 7].try_into().ok()?) as u32;
                 return Some((width, height));
             }
             cursor += segment_len;
@@ -511,10 +499,7 @@ fn validate_cover_dimensions(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn read_cover_blocking(
-    folders: Vec<PathBuf>,
-    file_path: String,
-) -> Result<Option<String>, String> {
+fn read_cover_blocking(folders: Vec<PathBuf>, file_path: String) -> Result<Option<String>, String> {
     let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
     let Ok(tagged) = read_from_path(&file_path) else {
         return Ok(None);
@@ -801,13 +786,7 @@ async fn set_settings(
         .map_err(|error| error.to_string())
         .map(|current| stored_music_folders_from_value(&current))?;
     let value = sanitize_settings(&requested, &authorized)?;
-    write_json_async(
-        app,
-        persistence.0.clone(),
-        "settings.json",
-        value.clone(),
-    )
-    .await?;
+    write_json_async(app, persistence.0.clone(), "settings.json", value.clone()).await?;
     *state.0.write().map_err(|error| error.to_string())? = value;
     Ok(())
 }
@@ -823,7 +802,10 @@ async fn report_frontend_error(
         .replace('\n', " ");
     let detail = bounded_text(&detail, 64 * 1024);
     tauri::async_runtime::spawn_blocking(move || {
-        let directory = app.path().app_log_dir().map_err(|error| error.to_string())?;
+        let directory = app
+            .path()
+            .app_log_dir()
+            .map_err(|error| error.to_string())?;
         std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         let path = directory.join("frontend-errors.log");
         let truncate = std::fs::metadata(&path)
@@ -844,9 +826,7 @@ async fn report_frontend_error(
 }
 
 #[tauri::command]
-fn get_last_playlist(
-    snapshot: State<'_, PlaybackSnapshotState>,
-) -> Result<Option<Value>, String> {
+fn get_last_playlist(snapshot: State<'_, PlaybackSnapshotState>) -> Result<Option<Value>, String> {
     snapshot
         .0
         .read()
@@ -867,13 +847,7 @@ async fn save_last_playlist(
     let raw: Value = serde_json::from_str(&playlist).map_err(|error| error.to_string())?;
     let value = sanitize_playlist(&raw)?;
     *snapshot.0.write().map_err(|error| error.to_string())? = Some(value.clone());
-    write_json_async(
-        app,
-        persistence.0.clone(),
-        "last-playlist.json",
-        value,
-    )
-    .await
+    write_json_async(app, persistence.0.clone(), "last-playlist.json", value).await
 }
 
 fn allowed_shortcut_action(id: &str) -> bool {
@@ -892,7 +866,9 @@ fn register_shortcuts(
     #[cfg(desktop)]
     {
         let manager = app.global_shortcut();
-        manager.unregister_all().map_err(|error| error.to_string())?;
+        manager
+            .unregister_all()
+            .map_err(|error| error.to_string())?;
         registry
             .0
             .write()
@@ -1076,7 +1052,9 @@ pub fn run() {
             )
             .map_err(std::io::Error::other)?
             .and_then(|value| sanitize_playlist(&value).ok());
-            app.manage(PlaybackSnapshotState(Arc::new(RwLock::new(initial_playlist))));
+            app.manage(PlaybackSnapshotState(Arc::new(RwLock::new(
+                initial_playlist,
+            ))));
 
             // MPRIS is an optional Linux desktop integration. D-Bus failure must
             // never make the native audio player itself fail to start.

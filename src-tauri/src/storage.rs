@@ -9,7 +9,10 @@ use tauri::{AppHandle, Manager};
 const DEFAULT_MAX_JSON_BYTES: u64 = 64 * 1024 * 1024;
 
 fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
-    let directory = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory.join(name))
 }
@@ -95,7 +98,8 @@ pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), Stri
             .write(true)
             .open(&tmp)
             .map_err(|error| error.to_string())?;
-        file.write_all(&content).map_err(|error| error.to_string())?;
+        file.write_all(&content)
+            .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
     if cfg!(windows) && path.exists() {
