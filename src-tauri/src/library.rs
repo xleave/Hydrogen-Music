@@ -131,6 +131,7 @@ struct ScanBudget {
     directories: AtomicUsize,
     entries: AtomicUsize,
     truncated: AtomicBool,
+    incomplete: AtomicBool,
 }
 
 impl ScanBudget {
@@ -140,6 +141,7 @@ impl ScanBudget {
             directories: AtomicUsize::new(0),
             entries: AtomicUsize::new(0),
             truncated: AtomicBool::new(false),
+            incomplete: AtomicBool::new(false),
         }
     }
 
@@ -163,6 +165,14 @@ impl ScanBudget {
 
     fn reserve_entry(&self) -> bool {
         Self::reserve(&self.entries, MAX_VISITED_ENTRIES, &self.truncated)
+    }
+
+    fn mark_incomplete(&self) {
+        self.incomplete.store(true, Ordering::Release);
+    }
+
+    fn may_prune_cache(&self) -> bool {
+        !self.truncated.load(Ordering::Acquire) && !self.incomplete.load(Ordering::Acquire)
     }
 }
 
@@ -204,11 +214,13 @@ pub fn scan(
             let root = match fs::canonicalize(folder) {
                 Ok(root) => root,
                 Err(error) => {
+                    budget.mark_incomplete();
                     eprintln!("[library scan] 无法解析 {}: {error}", folder.display());
                     return Ok(None);
                 }
             };
             if !root.is_dir() {
+                budget.mark_incomplete();
                 eprintln!("[library scan] {} 不是目录", root.display());
                 return Ok(None);
             }
@@ -226,6 +238,7 @@ pub fn scan(
                 Ok(result) => Ok(Some(result)),
                 Err(error) if error == STALE_SCAN => Err(error),
                 Err(error) => {
+                    budget.mark_incomplete();
                     eprintln!("[library scan] {error}");
                     Ok(None)
                 }
@@ -240,7 +253,7 @@ pub fn scan(
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
 
     if let Some(index_path) = index_path.as_deref() {
-        if let Err(error) = persist_index(index_path, &cache) {
+        if let Err(error) = persist_index(index_path, &cache, budget.may_prune_cache()) {
             eprintln!("[library index] failed to persist cache: {error}");
         }
     }
@@ -275,16 +288,25 @@ fn scan_directory(
         return Err(format!("目录层级过深: {}", path.display()));
     }
 
-    let read_dir = fs::read_dir(path)
-        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
+    let read_dir = match fs::read_dir(path) {
+        Ok(read_dir) => read_dir,
+        Err(error) => {
+            budget.mark_incomplete();
+            return Err(format!("无法读取 {}: {error}", path.display()));
+        }
+    };
     let mut entries = Vec::new();
     for entry in read_dir {
         ensure_current(request_id, latest_request_id)?;
         if !budget.reserve_entry() {
             break;
         }
-        if let Ok(entry) = entry {
-            entries.push(entry);
+        match entry {
+            Ok(entry) => entries.push(entry),
+            Err(error) => {
+                budget.mark_incomplete();
+                eprintln!("[library scan] 无法读取目录项 {}: {error}", path.display());
+            }
         }
     }
     entries.sort_unstable_by(|a, b| a.file_name().cmp(&b.file_name()));
@@ -293,8 +315,13 @@ fn scan_directory(
     let mut audio_paths = Vec::new();
     for entry in entries {
         ensure_current(request_id, latest_request_id)?;
-        let Ok(file_type) = entry.file_type() else {
-            continue;
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                budget.mark_incomplete();
+                eprintln!("[library scan] 无法读取 {} 的文件类型: {error}", entry.path().display());
+                continue;
+            }
         };
         if file_type.is_symlink() {
             continue;
@@ -329,7 +356,10 @@ fn scan_directory(
                 children.push(node);
             }
             Err(error) if error == STALE_SCAN => return Err(error),
-            Err(error) => eprintln!("[library scan] {error}"),
+            Err(error) => {
+                budget.mark_incomplete();
+                eprintln!("[library scan] {error}");
+            }
         }
     }
 
@@ -510,7 +540,7 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
     Ok(cache)
 }
 
-fn persist_index(path: &Path, cache: &ScanCache) -> Result<(), String> {
+fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -535,17 +565,21 @@ fn persist_index(path: &Path, cache: &ScanCache) -> Result<(), String> {
         .lock()
         .map_err(|error| error.to_string())?
         .clone();
-    let seen = cache
-        .seen
-        .lock()
-        .map_err(|error| error.to_string())?
-        .clone();
-    let stale: Vec<String> = cache
-        .entries
-        .keys()
-        .filter(|path| !seen.contains(*path))
-        .cloned()
-        .collect();
+    let stale = if prune_stale {
+        let seen = cache
+            .seen
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
+        cache
+            .entries
+            .keys()
+            .filter(|path| !seen.contains(*path))
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
     {
@@ -793,5 +827,14 @@ mod tests {
         assert!(!budget.truncated.load(Ordering::Acquire));
         assert!(!budget.reserve_track());
         assert!(budget.truncated.load(Ordering::Acquire));
+        assert!(!budget.may_prune_cache());
+    }
+
+    #[test]
+    fn incomplete_scan_never_prunes_cache() {
+        let budget = ScanBudget::new();
+        assert!(budget.may_prune_cache());
+        budget.mark_incomplete();
+        assert!(!budget.may_prune_cache());
     }
 }
