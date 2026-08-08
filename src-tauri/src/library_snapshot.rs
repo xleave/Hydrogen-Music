@@ -1,12 +1,13 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
 };
 
 const MAX_SNAPSHOT_BYTES: u64 = 128 * 1024 * 1024;
-const SNAPSHOT_VERSION: u64 = 1;
+const SNAPSHOT_VERSION: u64 = 2;
 
 fn cache_directory() -> Option<PathBuf> {
     if let Some(cache_home) = std::env::var_os("XDG_CACHE_HOME") {
@@ -79,15 +80,25 @@ pub fn load(roots: &[PathBuf]) -> Result<Option<Value>, String> {
     if stored_roots != normalized_roots(roots) {
         return Ok(None);
     }
-    Ok(value.get("result").cloned())
+    let result = value.get("result").cloned();
+    if result
+        .as_ref()
+        .and_then(|result| result.get("complete"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Ok(None);
+    }
+    Ok(result)
 }
 
 pub fn save<T: Serialize>(roots: &[PathBuf], result: &T) -> Result<(), String> {
     let result = serde_json::to_value(result).map_err(|error| error.to_string())?;
-    if result
-        .get("truncated")
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
+    if result.get("complete").and_then(Value::as_bool) != Some(true)
+        || result
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
     {
         return Ok(());
     }
@@ -110,7 +121,16 @@ pub fn save<T: Serialize>(roots: &[PathBuf], result: &T) -> Result<(), String> {
     }
 
     let temporary = path.with_extension("tmp");
-    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&bytes).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+    }
     if cfg!(windows) && path.exists() {
         let _ = fs::remove_file(&path);
     }
