@@ -177,7 +177,7 @@ export function updateMediaSession() {
     artist: (track.ar || []).map((artist) => artist.name).join(', '),
     album: track.album || '',
   }
-  windowApi.setSystemMediaMetadata({ ...metadata, duration: time.value }).catch((error) => reportAudioError('media.metadata', error))
+  windowApi.setSystemMediaMetadata({ ...metadata, duration: time.value, filePath: track.url }).catch((error) => reportAudioError('media.metadata', error))
   if (!('mediaSession' in navigator) || !('MediaMetadata' in window)) return
   if (coverUrl.value) metadata.artwork = [{ src: coverUrl.value }]
   navigator.mediaSession.metadata = new MediaMetadata(metadata)

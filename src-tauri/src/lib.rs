@@ -530,6 +530,81 @@ async fn read_cover(
         .map_err(|error| error.to_string())?
 }
 
+fn materialize_media_cover_blocking(
+    app: AppHandle,
+    folders: Vec<PathBuf>,
+    file_path: String,
+) -> Result<Option<String>, String> {
+    let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
+    let Ok(tagged) = read_from_path(&file_path) else {
+        return Ok(None);
+    };
+    let picture = tagged.tags().iter().find_map(|tag| tag.pictures().first());
+    let Some(picture) = picture else {
+        return Ok(None);
+    };
+    if picture.data().len() > MAX_COVER_BYTES {
+        return Err("embedded cover is too large".to_string());
+    }
+    validate_cover_dimensions(picture.data())?;
+
+    let extension = match cover_mime(picture.data()) {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        _ => return Ok(None),
+    };
+
+    let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&file_path, &mut hasher);
+    std::hash::Hash::hash(&metadata.len(), &mut hasher);
+    if let Ok(modified) = metadata.modified() {
+        if let Ok(stamp) = modified.duration_since(std::time::UNIX_EPOCH) {
+            std::hash::Hash::hash(&stamp.as_nanos(), &mut hasher);
+        }
+    }
+    let key = std::hash::Hasher::finish(&hasher);
+
+    let directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("mpris-artwork");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let target = directory.join(format!("{key:016x}.{extension}"));
+    let needs_write = std::fs::metadata(&target)
+        .map(|cached| cached.len() != picture.data().len() as u64)
+        .unwrap_or(true);
+    if needs_write {
+        std::fs::write(&target, picture.data()).map_err(|error| error.to_string())?;
+    }
+
+    let mut cached = std::fs::read_dir(&directory)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path == target || !path.is_file() {
+                return None;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, path))
+        })
+        .collect::<Vec<_>>();
+    cached.sort_by_key(|(modified, _)| *modified);
+    let remove_count = cached.len().saturating_sub(31);
+    for (_, path) in cached.into_iter().take(remove_count) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    let url = tauri::Url::from_file_path(&target)
+        .map_err(|_| "failed to create MPRIS artwork file URL".to_string())?;
+    Ok(Some(url.to_string()))
+}
+
 fn cover_mime(data: &[u8]) -> &'static str {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         "image/png"
@@ -649,19 +724,36 @@ fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn media_set_metadata(
+async fn media_set_metadata(
+    app: AppHandle,
+    settings: State<'_, SettingsState>,
     media: State<'_, media::MediaState>,
     title: String,
     artist: String,
     album: String,
     duration: f64,
+    file_path: Option<String>,
 ) -> Result<(), String> {
     let duration = finite(duration, "duration")?.clamp(0.0, MAX_AUDIO_SECONDS);
+    let title = bounded_text(&title, MAX_TEXT_CHARS);
+    let artist = bounded_text(&artist, MAX_TEXT_CHARS);
+    let album = bounded_text(&album, MAX_TEXT_CHARS);
+    let cover_url = if let Some(file_path) = file_path {
+        let folders = configured_music_folders(&settings)?;
+        tauri::async_runtime::spawn_blocking(move || {
+            materialize_media_cover_blocking(app, folders, file_path)
+        })
+        .await
+        .map_err(|error| error.to_string())??
+    } else {
+        None
+    };
     media.set_metadata(
-        &bounded_text(&title, MAX_TEXT_CHARS),
-        &bounded_text(&artist, MAX_TEXT_CHARS),
-        &bounded_text(&album, MAX_TEXT_CHARS),
+        &title,
+        &artist,
+        &album,
         duration,
+        cover_url.as_deref(),
     )
 }
 
