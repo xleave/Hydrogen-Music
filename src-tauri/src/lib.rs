@@ -1,4 +1,5 @@
 mod audio;
+mod file_replace;
 mod library;
 mod library_snapshot;
 mod media;
