@@ -13,7 +13,7 @@
   import { usePlayerStore } from './store/playerStore'
 
   // Diagnostics must never be a first-frame dependency. The component is
-  // loaded after the root app has mounted; when collapsed it does not sample.
+  // loaded after the root app has mounted; when disabled it does not sample.
   const PerformanceMonitor = defineAsyncComponent(() => import('./components/PerformanceMonitor.vue'))
   const playerStore = usePlayerStore()
   const route = useRoute()
@@ -33,12 +33,12 @@
     <WindowControl class="window-control"></WindowControl>
   </div>
   <Transition name="widget">
-    <div class="musicWidget" v-if="playerStore.songList" v-show="playerStore.widgetState">
+    <div class="musicWidget" v-if="playerStore.hasPlaylist" v-show="playerStore.widgetState">
       <MusicWidget></MusicWidget>
     </div>
   </Transition>
   <Transition name="player">
-    <div class="musicPlayer" v-if="playerStore.songList" v-show="!playerStore.widgetState">
+    <div class="musicPlayer" v-if="playerStore.hasPlaylist" v-show="!playerStore.widgetState">
       <MusicPlayer></MusicPlayer>
     </div>
   </Transition>
@@ -82,7 +82,7 @@
     }
     &.settings-overlay{
       position: relative;
-      z-index: 900;
+      z-index: var(--z-settings);
     }
     .home{
       height: calc(100% - 78Px);
@@ -95,7 +95,7 @@
     position: absolute;
     top: 22Px;
     left: 45Px;
-    z-index: 999;
+    z-index: var(--z-chrome);
     .widget-title{
       &:hover{
         cursor: pointer;
@@ -108,14 +108,14 @@
     background: transparent;
     position: fixed;
     top: 0;
-    z-index: 999;
+    z-index: var(--z-chrome);
     -webkit-app-region: drag;
     .window-control{
       position: fixed;
       top: 13Px;
       right: 15Px;
       -webkit-app-region: no-drag;
-      z-index: 999;
+      z-index: var(--z-chrome);
     }
   }
   .musicWidget{
@@ -126,6 +126,7 @@
     bottom: 35Px;
     transform: translateX(-50%);
     box-shadow: 0 0 15Px 2Px rgba(189, 189, 189, 0.1);
+    z-index: var(--z-player-widget);
   }
   .musicPlayer{
     width: 100%;  
@@ -133,11 +134,18 @@
     position: absolute;
     top: 0;
     left: 0;
+    z-index: var(--z-player);
+  }
+  .context-menu{
+    z-index: var(--z-popover);
+  }
+  .globalDialog{
+    z-index: var(--z-modal);
   }
   .globalNotice{
     bottom: 120Px;
     position: fixed;
-    z-index: 999;
+    z-index: var(--z-notice);
   }
 
   .home-enter-active,
