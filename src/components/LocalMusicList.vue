@@ -19,7 +19,7 @@
 <template>
   <div class="local-music-list">
     <div class="list-container">
-      <div class="list-folder" v-show="listType2 === 0">
+      <div class="list-folder" v-if="listType2 === 0">
         <div class="list-item" @click.stop="showFiles(item)" :key="item.id || item.dirPath" :class="{'list-item-open': item.show && item.children.length !== 0, 'list-item-selected': router.currentRoute.value.query.id === (item.id || item.dirPath)}" v-for="item in props.folderlist">
           <div class="folder">
             <div class="folder-img">
@@ -33,16 +33,16 @@
             </div>
           </div>
           <Transition name="children">
-            <div class="children-folder" v-if="item.children.length !== 0" v-show="item.show">
+            <div class="children-folder" v-if="item.children.length !== 0 && item.show">
               <ChildrenFolder :folderChildren="item.children" :type="props.type"></ChildrenFolder>
             </div>
           </Transition>
         </div>
       </div>
-      <div class="list-albums" v-if="props.type === 'local'" v-show="listType2 === 1">
+      <div class="list-albums" v-else-if="props.type === 'local' && listType2 === 1">
         <LocalMusicClassify :classifyData="props.classifylist.albums"></LocalMusicClassify>
       </div>
-      <div class="list-artists" v-if="props.type === 'local'" v-show="listType2 === 2">
+      <div class="list-artists" v-else-if="props.type === 'local' && listType2 === 2">
         <LocalMusicClassify :classifyData="props.classifylist.artists"></LocalMusicClassify>
       </div>
     </div>
