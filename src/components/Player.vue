@@ -2,8 +2,9 @@
   import { songTime2 } from '../utils/player';
   import VueSlider from 'vue-slider-component'
   import PlayList from './PlayList.vue'
+  import PlayerProgress from './PlayerProgress.vue'
   import AppIcon from './icons/AppIcon.vue'
-  import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode } from '../utils/player'
+  import { startMusic, pauseMusic, playLast, playNext, changePlayMode } from '../utils/player'
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia';
   const playerStore = usePlayerStore()
@@ -41,7 +42,7 @@
                     <span class="time-end">{{songTime2(time)}}</span>
                 </div>
                 <div class="process">
-                    <vue-slider data-player-progress class="music-progress" @click="changeProgress(progress)"  v-model="progress" :min="0" :max="time" :interval="1" :duration="0.5" tooltip="none"></vue-slider>
+                    <PlayerProgress data-player-progress class="music-progress" v-model="progress" :max="time" />
                 </div>
             </div>
 
@@ -338,7 +339,6 @@
                 width: 100% !important;
                 height: 1.3vh !important;
                 box-shadow: 0 0 0 0.5Px black;
-                transition: 0.2s;
               }
           }
         }
