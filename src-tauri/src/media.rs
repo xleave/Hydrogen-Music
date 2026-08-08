@@ -69,6 +69,8 @@ mod platform {
                         title: Some(title),
                         artist: Some(artist),
                         album: Some(album),
+                        // MPRIS consumers run outside the WebView, so artwork must
+                        // be a system-readable URL rather than a data/blob URL.
                         cover_url,
                         duration: Some(Duration::from_secs_f64(duration.max(0.0))),
                     })
