@@ -95,6 +95,18 @@ test('lyrics consume shared playback progress without a duplicate timer', () => 
   assert.doesNotMatch(lyric, /currentMusic\.value\?\.seek\(\)/)
 })
 
+test('system media metadata keeps Linux MPRIS artwork wired', () => {
+  const playback = source('src/utils/player/playback.js')
+  const media = source('src-tauri/src/media.rs')
+  const lib = source('src-tauri/src/lib.rs')
+
+  assert.match(playback, /setSystemMediaMetadata\(\{ \.\.\.metadata, duration: time\.value, filePath: track\.url \}\)/)
+  assert.match(media, /cover_url,/)
+  assert.match(media, /cover_url: Option<&str>/)
+  assert.match(lib, /materialize_media_cover_blocking/)
+  assert.match(lib, /cover_url\.as_deref\(\)/)
+})
+
 test('application version stays consistent across frontend, Rust, Tauri and UI', () => {
   const packageJson = JSON.parse(source('package.json'))
   const packageLock = JSON.parse(source('package-lock.json'))
