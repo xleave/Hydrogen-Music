@@ -21,6 +21,7 @@ const tlyricSize = ref(13)
 const rlyricSize = ref(12)
 const lyricInterlude = ref(13)
 const globalShortcuts = ref(false)
+const globalShortcutError = ref('')
 const quitApp = ref('minimize')
 const quitAppOptions = [
   { label: '最小化至托盘', value: 'minimize' },
@@ -42,6 +43,12 @@ const saveStateLabel = computed(() => ({
   saving: '保存中…',
   failed: '保存失败',
 }[saveState.value]))
+
+const globalShortcutState = computed(() => {
+  if (!globalShortcuts.value) return { label: '窗口内快捷键可用', failed: false }
+  if (globalShortcutError.value) return { label: '当前会话不支持全局快捷键', failed: true }
+  return { label: '全局快捷键已注册', failed: false }
+})
 
 const fontPreviewStyle = computed(() => customFont.value
   ? { fontFamily: customFont.value }
@@ -76,7 +83,9 @@ async function applyShortcuts() {
   if (hydrating.value || selectedShortcut.value) return
   try {
     await windowApi.registerShortcuts(shortcutsList.value, globalShortcuts.value)
+    globalShortcutError.value = ''
   } catch (error) {
+    globalShortcutError.value = String(error)
     console.error('[shortcuts.register]', error)
   }
 }
@@ -330,12 +339,15 @@ function toGithub() {
           <h2 class="item-title">快捷键</h2>
           <div class="line"></div>
           <div class="item-options" tabindex="0" @keydown="inputShortcut">
-            <div class="option">
-              <div class="option-name">开启全局快捷键</div>
+            <div class="option shortcut-toggle-option">
+              <div class="shortcut-option-copy">
+                <div class="option-name">开启全局快捷键</div>
+                <div class="shortcut-status" :class="{ 'shortcut-status-failed': globalShortcutState.failed }">{{ globalShortcutState.label }}</div>
+              </div>
               <div class="option-operation">
                 <div class="toggle" @click="globalShortcuts = !globalShortcuts">
-                  <div class="toggle-off" :class="{ 'toggle-on-in': globalShortcuts }">{{ globalShortcuts ? '已开启' : '已关闭' }}</div>
-                  <Transition name="toggle"><div class="toggle-on" v-show="globalShortcuts"></div></Transition>
+                  <div class="toggle-off" :class="{ 'toggle-on-in': globalShortcuts && !globalShortcutState.failed }">{{ globalShortcuts ? (globalShortcutState.failed ? '不可用' : '已开启') : '已关闭' }}</div>
+                  <Transition name="toggle"><div class="toggle-on" v-show="globalShortcuts && !globalShortcutState.failed"></div></Transition>
                 </div>
               </div>
             </div>
@@ -562,6 +574,18 @@ function toGithub() {
           }
         }
 
+        .shortcut-toggle-option { align-items: flex-start; }
+        .shortcut-option-copy {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+        }
+        .shortcut-status {
+          font: 10px SourceHanSansCN-Bold;
+          color: rgba(0, 0, 0, .48);
+        }
+        .shortcut-status-failed { color: rgba(150, 30, 30, .82); }
         .local-folder-option { align-items: flex-start; }
         .font-option { align-items: flex-start; }
         .forbid-shortcuts { opacity: .5; pointer-events: none; }
