@@ -135,13 +135,20 @@ async function runExitFlush(playlist) {
   }
 }
 
+async function getCachedLibrary(params = {}) {
+  const result = await invoke('get_cached_library')
+  if (!result) return null
+  emit('localMusicFiles', { ...result, type: params.type, cached: true })
+  return result
+}
+
 async function scanLocalMusic(params = {}) {
   const requestId = ++scanRequestId
   try {
     const result = await invoke('scan_local_music', { requestId })
     if (requestId !== scanRequestId) return null
     emit('localMusicCount', result.count)
-    emit('localMusicFiles', { ...result, type: params.type })
+    emit('localMusicFiles', { ...result, type: params.type, cached: false })
     return result
   } catch (error) {
     if (requestId !== scanRequestId || String(error).includes('stale music scan')) return null
@@ -168,6 +175,7 @@ export function installWindowApi() {
     beforeQuit: (callback) => subscribe('beforeQuit', callback),
     beforeTrayHide: (callback) => subscribe('beforeTrayHide', callback),
     exitApp: (playlist) => runExitFlush(playlist),
+    getCachedLibrary,
     scanLocalMusic,
     localMusicFiles: (callback) => subscribe('localMusicFiles', callback),
     localMusicCount: (callback) => subscribe('localMusicCount', callback),
