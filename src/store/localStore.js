@@ -208,7 +208,7 @@ export const useLocalStore = defineStore('localStore', {
                     name: album.name,
                     albumArtist: album.albumArtist,
                 }
-                this.currentSelectedSongs = asRaw(album.songs)
+                this.currentSelectedSongs = this.resolveTrackIds(album.trackIds)
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
@@ -225,7 +225,7 @@ export const useLocalStore = defineStore('localStore', {
                     id: artist.id,
                     name: artist.name
                 }
-                this.currentSelectedSongs = asRaw(artist.songs)
+                this.currentSelectedSongs = this.resolveTrackIds(artist.trackIds)
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res

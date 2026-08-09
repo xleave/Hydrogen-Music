@@ -20,10 +20,10 @@ function classifyAdd(song) {
                 id: artist,
                 type: 'artist',
                 name: artist,
-                songs: []
+                trackIds: []
             })
         }
-        artistMap.get(artist).songs.push(song)
+        artistMap.get(artist).trackIds.push(song.id)
     })
 
     const album = song.common.album || '其他'
@@ -35,10 +35,10 @@ function classifyAdd(song) {
             type: 'album',
             name: album,
             albumArtist,
-            songs: []
+            trackIds: []
         })
     }
-    albumMap.get(albumId).songs.push(song)
+    albumMap.get(albumId).trackIds.push(song.id)
 }
 
 function classify(arr) {
