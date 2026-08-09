@@ -2,7 +2,9 @@ export class DialogQueue {
   constructor({ show, hide, schedule = queueMicrotask }) {
     this.show = show
     this.hide = hide
-    this.schedule = schedule
+    // WebKitGTK requires native Window methods such as queueMicrotask to be
+    // called without rebinding their receiver to the queue instance.
+    this.schedule = (task) => schedule(task)
     this.pending = []
     this.active = null
   }

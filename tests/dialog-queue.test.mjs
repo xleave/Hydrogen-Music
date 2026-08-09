@@ -35,3 +35,22 @@ test('a dialog without a callback closes safely', async () => {
 
   assert.equal(hidden, 1)
 })
+
+test('the scheduler is called without the dialog queue as its receiver', async () => {
+  let callbackResult = null
+  function receiverSensitiveSchedule(task) {
+    assert.equal(this, undefined)
+    queueMicrotask(task)
+  }
+  const queue = new DialogQueue({
+    show: () => {},
+    hide: () => {},
+    schedule: receiverSensitiveSchedule,
+  })
+
+  queue.open('Enable blur', 'Continue?', (confirmed) => { callbackResult = confirmed })
+  queue.resolve(true)
+  await Promise.resolve()
+
+  assert.equal(callbackResult, true)
+})
