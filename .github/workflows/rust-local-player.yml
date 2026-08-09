@@ -50,10 +50,10 @@ jobs:
         run: cargo audit --file src-tauri/Cargo.lock
 
   fedora-rpm:
-    name: Fedora 42 RPM
+    name: Fedora 43 RPM
     needs: verify
     runs-on: ubuntu-24.04
-    container: fedora:42
+    container: fedora:43
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable

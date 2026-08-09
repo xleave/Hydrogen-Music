@@ -8,7 +8,7 @@
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia';
   const playerStore = usePlayerStore()
-  const { playing, progress, volume, playMode, currentIndex, songList, lyricType, playlistWidgetShow, time, playerChangeSong, localBase64Img, coverBlur } = storeToRefs(playerStore)
+  const { playing, progress, volume, playMode, currentIndex, songList, lyricPreferences, lyricAvailability, playlistWidgetShow, time, playerChangeSong, localBase64Img, coverBlur } = storeToRefs(playerStore)
 </script>
 
 <template>
@@ -65,12 +65,12 @@
         </div>
 
         <div class="song-control">
-            <AppIcon v-show="lyricType.includes('roma') && !lyricType.includes('noRoma')" name="romanization" class="icon" @click="lyricType.splice(lyricType.indexOf('roma'), 1)" />
-            <AppIcon v-show="!lyricType.includes('roma') && !lyricType.includes('noRoma')" name="romanization" class="icon inactive-icon" @click="lyricType.push('roma')" />
-            <AppIcon v-show="lyricType.includes('trans') && !lyricType.includes('noTrans')" name="translation" class="icon" @click="lyricType.splice(lyricType.indexOf('trans'), 1)" />
-            <AppIcon v-show="!lyricType.includes('trans') && !lyricType.includes('noTrans')" name="translation" class="icon inactive-icon" @click="lyricType.push('trans')" />
-            <AppIcon v-show="lyricType.includes('original') && !lyricType.includes('noOriginal')" name="original" class="icon" @click="lyricType.splice(lyricType.indexOf('original'), 1)" />
-            <AppIcon v-show="!lyricType.includes('original') && !lyricType.includes('noOriginal')" name="original" class="icon inactive-icon" @click="lyricType.push('original')" />
+            <AppIcon v-show="lyricPreferences.includes('roma') && lyricAvailability.roma" name="romanization" class="icon" @click="playerStore.toggleLyricPreference('roma')" />
+            <AppIcon v-show="!lyricPreferences.includes('roma') && lyricAvailability.roma" name="romanization" class="icon inactive-icon" @click="playerStore.toggleLyricPreference('roma')" />
+            <AppIcon v-show="lyricPreferences.includes('trans') && lyricAvailability.trans" name="translation" class="icon" @click="playerStore.toggleLyricPreference('trans')" />
+            <AppIcon v-show="!lyricPreferences.includes('trans') && lyricAvailability.trans" name="translation" class="icon inactive-icon" @click="playerStore.toggleLyricPreference('trans')" />
+            <AppIcon v-show="lyricPreferences.includes('original') && lyricAvailability.original" name="original" class="icon" @click="playerStore.toggleLyricPreference('original')" />
+            <AppIcon v-show="!lyricPreferences.includes('original') && lyricAvailability.original" name="original" class="icon inactive-icon" @click="playerStore.toggleLyricPreference('original')" />
             
             <AppIcon v-show="playMode === 0" name="sequence" class="icon" @click="changePlayMode()" />
             <AppIcon v-show="playMode === 1" name="repeat" class="icon" @click="changePlayMode()" />

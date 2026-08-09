@@ -6,6 +6,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+use crate::file_replace;
+
 fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let directory = app
         .path()
@@ -34,6 +36,7 @@ pub fn read_json_with_limit(
     max_bytes: u64,
 ) -> Result<Value, String> {
     let path = data_file(app, name)?;
+    file_replace::recover_backup(&path)?;
     if !path.is_file() {
         write_json(app, name, &default)?;
         return Ok(default);
@@ -60,6 +63,7 @@ pub fn read_optional_json_with_limit(
     max_bytes: u64,
 ) -> Result<Option<Value>, String> {
     let path = data_file(app, name)?;
+    file_replace::recover_backup(&path)?;
     if !path.is_file() {
         return Ok(None);
     }
@@ -79,6 +83,7 @@ pub fn read_optional_json_with_limit(
 
 pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), String> {
     let path = data_file(app, name)?;
+    file_replace::recover_backup(&path)?;
     let content = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
     let tmp = path.with_extension("tmp");
     {
@@ -92,10 +97,7 @@ pub fn write_json(app: &AppHandle, name: &str, value: &Value) -> Result<(), Stri
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
-    if cfg!(windows) && path.exists() {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
-    }
-    fs::rename(&tmp, &path).map_err(|error| error.to_string())?;
+    file_replace::replace(&tmp, &path)?;
     if let Some(parent) = path.parent() {
         if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
             let _ = directory.sync_all();

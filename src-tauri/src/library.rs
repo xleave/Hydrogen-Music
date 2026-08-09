@@ -177,35 +177,18 @@ impl ScanBudget {
     }
 }
 
-fn library_index_path() -> Option<PathBuf> {
-    if let Some(cache_home) = std::env::var_os("XDG_CACHE_HOME") {
-        if !cache_home.is_empty() {
-            return Some(PathBuf::from(cache_home).join("hydrogen-music/library-index.sqlite3"));
-        }
-    }
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .map(|home| home.join(".cache/hydrogen-music/library-index.sqlite3"))
-}
-
 pub fn scan(
     folders: &[PathBuf],
     request_id: u64,
     latest_request_id: &AtomicU64,
     roots_complete: bool,
+    index_path: &Path,
 ) -> Result<ScanResult, String> {
     ensure_current(request_id, latest_request_id)?;
-    let index_path = library_index_path();
-    let cache_entries = index_path
-        .as_deref()
-        .map(load_index)
-        .transpose()
-        .unwrap_or_else(|error| {
-            eprintln!("[library index] ignoring cache: {error}");
-            Some(HashMap::new())
-        })
-        .unwrap_or_default();
+    let cache_entries = load_index(index_path).unwrap_or_else(|error| {
+        eprintln!("[library index] ignoring cache: {error}");
+        HashMap::new()
+    });
     let cache = ScanCache::new(cache_entries);
     let budget = ScanBudget::new();
 
@@ -248,10 +231,8 @@ pub fn scan(
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
 
     let complete = roots_complete && budget.may_prune_cache();
-    if let Some(index_path) = index_path.as_deref() {
-        if let Err(error) = persist_index(index_path, &cache, complete) {
-            eprintln!("[library index] failed to persist cache: {error}");
-        }
+    if let Err(error) = persist_index(index_path, &cache, complete) {
+        eprintln!("[library index] failed to persist cache: {error}");
     }
 
     Ok(ScanResult {

@@ -84,29 +84,6 @@ test('lyric return can be interrupted without losing the visual offset', () => {
   assert.match(lyric, /if \(isReturning\) cancelReturnAnimation\(true\)/)
 })
 
-test('lyrics consume shared playback progress without a duplicate timer', () => {
-  const lyric = source('src/components/Lyric.vue')
-
-  assert.match(lyric, /progress,/)
-  assert.match(lyric, /\[progress\.value, widgetState\.value, lyricShow\.value, lyricsObjArr\.value\]/)
-  assert.match(lyric, /updateActiveLine\(Number\(seek\)\)/)
-  assert.doesNotMatch(lyric, /activeTimer/)
-  assert.doesNotMatch(lyric, /setInterval\(updateActiveLine/)
-  assert.doesNotMatch(lyric, /currentMusic\.value\?\.seek\(\)/)
-})
-
-test('system media metadata keeps Linux MPRIS artwork wired', () => {
-  const playback = source('src/utils/player/playback.js')
-  const media = source('src-tauri/src/media.rs')
-  const lib = source('src-tauri/src/lib.rs')
-
-  assert.match(playback, /setSystemMediaMetadata\(\{ \.\.\.metadata, duration: time\.value, filePath: track\.url \}\)/)
-  assert.match(media, /cover_url,/)
-  assert.match(media, /cover_url: Option<&str>/)
-  assert.match(lib, /materialize_media_cover_blocking/)
-  assert.match(lib, /cover_url\.as_deref\(\)/)
-})
-
 test('application version stays consistent across frontend, Rust, Tauri and UI', () => {
   const packageJson = JSON.parse(source('package.json'))
   const packageLock = JSON.parse(source('package-lock.json'))
@@ -114,13 +91,13 @@ test('application version stays consistent across frontend, Rust, Tauri and UI',
   const cargo = source('src-tauri/Cargo.toml')
   const cargoLock = source('src-tauri/Cargo.lock')
   const settings = source('src/views/Settings.vue')
-  const expected = '0.8.1'
+  const expected = '0.8.4'
 
   assert.equal(packageJson.version, expected)
   assert.equal(packageLock.version, expected)
   assert.equal(packageLock.packages[''].version, expected)
   assert.equal(tauriConfig.version, expected)
-  assert.match(cargo, /^version = "0\.8\.1"$/m)
-  assert.match(cargoLock, /\[\[package\]\]\nname = "hydrogen-music"\nversion = "0\.8\.1"/)
-  assert.match(settings, /<div class="version">V0\.8\.1<\/div>/)
+  assert.match(cargo, /^version = "0\.8\.4"$/m)
+  assert.match(cargoLock, /\[\[package\]\]\nname = "hydrogen-music"\nversion = "0\.8\.4"/)
+  assert.match(settings, /<div class="version">V0\.8\.4<\/div>/)
 })

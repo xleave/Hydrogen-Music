@@ -84,6 +84,11 @@ export const useLocalStore = defineStore('localStore', {
     },
     actions: {
         setLibraryData(dirTree, filesMetadata, classifyData) {
+            const selectedType = this.currentType
+            const selectedId = this.currentSelectedInfo?.id
+                || this.currentSelectedInfo?.dirPath
+                || this.currentSelectedFile?.id
+                || this.currentSelectedFile?.dirPath
             const rawDirTree = asRaw(dirTree)
             const rawFilesMetadata = asRaw(filesMetadata)
             const rawClassifyData = asRaw(classifyData)
@@ -91,6 +96,13 @@ export const useLocalStore = defineStore('localStore', {
             this.localDirectoryTree = rawDirTree
             this.localMusicList = rawFilesMetadata
             this.localMusicClassify = rawClassifyData
+
+            if (selectedType && selectedId) {
+                const query = selectedType === 'localFiles'
+                    ? { id: selectedId, type: 'local' }
+                    : null
+                this.updateLocalMusicDetail(selectedType, query, selectedId)
+            }
         },
         getSongs(arr, target = []) {
             for (const song of arr || []) {
@@ -103,6 +115,7 @@ export const useLocalStore = defineStore('localStore', {
             const item = folderById.get(folderId)
             const songs = songsForRange(folderRangeById.get(folderId))
             if (item && songs) {
+                this.currentSelectedFile = item
                 this.currentSelectedInfo = {
                     id: item.id || item.dirPath,
                     name: item.name,
@@ -117,6 +130,7 @@ export const useLocalStore = defineStore('localStore', {
             // normal folder navigation after setLibraryData().
             for (const candidate of arr || []) {
               if(candidate.id === folderId || candidate.dirPath === folderId || candidate.name === folderId) {
+                this.currentSelectedFile = candidate
                 this.currentSelectedInfo = {
                     id: candidate.id || candidate.dirPath,
                     name: candidate.name,
@@ -132,24 +146,35 @@ export const useLocalStore = defineStore('localStore', {
         async getImgBase64(fileUrl) {
             return await windowApi.getLocalMusicImage(fileUrl)
         },
+        clearSelectedDetail() {
+            this.currentSelectedFile = {name: null}
+            this.currentSelectedInfo = null
+            this.currentSelectedSongs = null
+            this.currentSelectedFilePicUrl = null
+        },
         updateLocalMusicDetail(type, query, id) {
             const requestId = ++this.detailRequestId
             this.currentType = type
+            this.currentSelectedFilePicUrl = null
             if(type === 'localFiles') {
-                this.currentSelectedFilePicUrl = null
-                if(query?.type === 'local')
-                    this.getFolderSongs(this.localMusicList, query.id || query.name)
+                const found = query?.type === 'local'
+                    && this.getFolderSongs(this.localMusicList, query.id || query.name)
+                if (!found) this.clearSelectedDetail()
+                return Boolean(found)
             }
             if(type === 'localAlbum') {
                 const album = albumById.get(id) || (this.localMusicClassify?.albums || []).find((item) => item.id === id)
-                if (!album) return false
+                if (!album) {
+                    this.clearSelectedDetail()
+                    return false
+                }
+                this.currentSelectedFile = {name: null}
                 this.currentSelectedInfo = {
                     id: album.id,
                     name: album.name,
                     albumArtist: album.albumArtist,
                 }
                 this.currentSelectedSongs = asRaw(album.songs)
-                this.currentSelectedFilePicUrl = null
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
@@ -157,19 +182,22 @@ export const useLocalStore = defineStore('localStore', {
             }
             if(type === 'localArtist') {
                 const artist = artistById.get(id) || (this.localMusicClassify?.artists || []).find((item) => item.id === id)
-                if (!artist) return false
+                if (!artist) {
+                    this.clearSelectedDetail()
+                    return false
+                }
+                this.currentSelectedFile = {name: null}
                 this.currentSelectedInfo = {
                     id: artist.id,
                     name: artist.name
                 }
                 this.currentSelectedSongs = asRaw(artist.songs)
-                this.currentSelectedFilePicUrl = null
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
                     }).catch((error) => console.error('[local cover]', error))
             }
-            return true
+            return type === 'localAlbum' || type === 'localArtist'
         }
     },
 })

@@ -7,15 +7,15 @@ import { usePlayerStore } from '../store/playerStore'
 const playerStore = usePlayerStore()
 const {
   currentIndex,
-  lyric,
   lyricAnimationRevision,
+  lyricAvailability,
   lyricBlur,
   lyricInterludeTime,
+  lyricPreferences,
   lyricShow,
   lyricSize,
-  lyricType,
   lyricsObjArr,
-  playerChangeSong,
+  lyricsSynchronized,
   progress,
   rlyricSize,
   songList,
@@ -38,93 +38,13 @@ let pendingWheelDelta = 0
 let wheelVelocity = 0
 let isReturning = false
 
-const timestampPattern = /\[(\d{2}):(\d{2})(?:\.|:)(\d{2,3})\]/
-
-function parseTimestamp(value) {
-  const match = value.match(timestampPattern)
-  if (!match) return null
-  const milliseconds = Number(match[3].padEnd(3, '0'))
-  return Number(match[1]) * 60 + Number(match[2]) + milliseconds / 1000
-}
-
-function timedTextMap(lines) {
-  const result = new Map()
-  for (const line of lines || []) {
-    const time = parseTimestamp(line)
-    if (time === null) continue
-    result.set(time.toFixed(3), line.replace(timestampPattern, '').trim())
-  }
-  return result
-}
-
-function updateUnavailableTypes(original, translated, romanized) {
-  const entries = [
-    ['noOriginal', original],
-    ['noTrans', translated],
-    ['noRoma', romanized],
-  ]
-  for (const [name, available] of entries) {
-    const index = lyricType.value.indexOf(name)
-    if (available && index >= 0) lyricType.value.splice(index, 1)
-    if (!available && index < 0) lyricType.value.push(name)
-  }
-}
-
-function parseLyrics(value) {
-  const originalLines = value.lrc.lyric.split(/\r?\n/)
-  const translated = value.tlyric?.lyric?.split(/\r?\n/) || null
-  const romanized = value.romalrc?.lyric?.split(/\r?\n/) || null
-  updateUnavailableTypes(originalLines, translated, romanized)
-
-  const translatedByTime = timedTextMap(translated)
-  const romanizedByTime = timedTextMap(romanized)
-  const parsed = []
-  for (const line of originalLines) {
-    const time = parseTimestamp(line)
-    if (time === null) continue
-    const text = line.replace(timestampPattern, '').trim()
-    if (!text) continue
-    if (text.includes('纯音乐')) {
-      return [{ lyric: '纯音乐，请欣赏', time: 0 }]
-    }
-    const key = time.toFixed(3)
-    parsed.push({
-      lyric: text,
-      time,
-      tlyric: translatedByTime.get(key),
-      rlyric: romanizedByTime.get(key),
-    })
-  }
-  if (parsed.length) return parsed.sort((left, right) => left.time - right.time)
-
-  updateUnavailableTypes(originalLines, null, null)
-  return originalLines
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((text) => ({ active: true, lyric: text, time: 0 }))
-}
-
-const displayedLyrics = computed(() => {
-  if (lyric.value && !lyricsObjArr.value) {
-    lyricsObjArr.value = parseLyrics(lyric.value)
-    lyric.value = null
-    activeIndex.value = -1
-    interludeAnimation.value = false
-    resetManualScroll(true)
-    if (!lyricShow.value && !widgetState.value) {
-      lyricShow.value = true
-      playerChangeSong.value = false
-    }
-  }
-  if (!lyricsObjArr.value) updateUnavailableTypes(null, null, null)
-  return lyricsObjArr.value || []
-})
+const displayedLyrics = computed(() => lyricsObjArr.value || [])
 
 const lineHeight = computed(() => {
   const size = [
-    lyricType.value.includes('original') && !lyricType.value.includes('noOriginal') ? Number(lyricSize.value) : 0,
-    lyricType.value.includes('trans') && !lyricType.value.includes('noTrans') ? Number(tlyricSize.value) : 0,
-    lyricType.value.includes('roma') && !lyricType.value.includes('noRoma') ? Number(rlyricSize.value) : 0,
+    lyricPreferences.value.includes('original') && lyricAvailability.value.original ? Number(lyricSize.value) : 0,
+    lyricPreferences.value.includes('trans') && lyricAvailability.value.trans ? Number(tlyricSize.value) : 0,
+    lyricPreferences.value.includes('roma') && lyricAvailability.value.roma ? Number(rlyricSize.value) : 0,
   ].reduce((sum, value) => sum + value, 0)
   return size * 1.5 + 30
 })
@@ -199,6 +119,7 @@ function resetManualScroll(immediate = false) {
 }
 
 function findActiveLine(seek) {
+  if (!lyricsSynchronized.value) return -1
   const lines = displayedLyrics.value
   let low = 0
   let high = lines.length - 1
@@ -256,6 +177,7 @@ function lineStyle(index) {
 }
 
 function changeProgressLyric(time, index) {
+  if (!Number.isFinite(time)) return
   resetManualScroll(true)
   activeIndex.value = index
   changeProgress(time)
@@ -318,18 +240,25 @@ function handleWheel(event) {
 }
 
 watch(
-  () => [progress.value, widgetState.value, lyricShow.value, lyricsObjArr.value],
+  () => [progress.value, widgetState.value, lyricShow.value, lyricsObjArr.value, lyricsSynchronized.value],
   ([seek, isWidget, showLyric, lines]) => {
     if (!isWidget && showLyric && lines) updateActiveLine(Number(seek))
   },
   { immediate: true },
 )
 
+watch(lyricsObjArr, () => {
+  activeIndex.value = -1
+  interludeAnimation.value = false
+  interludeIndex.value = null
+  resetManualScroll(true)
+})
+
 watch(lyricAnimationRevision, () => {
   resetManualScroll(true)
 })
 
-watch([lyricSize, tlyricSize, rlyricSize, lyricType], () => {
+watch([lyricSize, tlyricSize, rlyricSize, lyricPreferences, lyricAvailability], () => {
   resetManualScroll(true)
 }, { deep: true })
 
@@ -344,16 +273,16 @@ onBeforeUnmount(() => {
 <template>
   <div class="lyric-container">
     <Transition name="fade">
-      <div v-show="lyricsObjArr && lyricShow && lyricType.includes('original')" class="lyric-area" @wheel.prevent="handleWheel">
+      <div v-show="lyricsObjArr && lyricShow && lyricPreferences.includes('original')" class="lyric-area" @wheel.prevent="handleWheel">
         <div class="lyric-scroll-area" :style="{ height: `${scrollAreaHeight}px` }"></div>
         <div ref="lyricTrack" class="lyric-track" :class="{ 'lyric-track-manual': !isLyricActive || isReturning }">
           <div class="lyric-auto-track" :style="autoTrackStyle">
             <div class="lyric-line" :style="lineStyle(index)" v-for="(item, index) in displayedLyrics" :key="`${item.time}-${index}`" v-show="item.lyric">
               <div class="line" @click="changeProgressLyric(item.time, index)" :class="{'line-highlight': index === activeIndex, 'lyric-inactive': !isLyricActive || item.active}">
                 <div class="lyric-text-group">
-                  <span class="roma" :style="{'font-size': `${rlyricSize}px`}" v-if="item.rlyric && lyricType.includes('roma')">{{item.rlyric}}</span>
-                  <span class="original" :style="{'font-size': `${lyricSize}px`}" v-if="lyricType.includes('original')">{{item.lyric}}</span>
-                  <span class="trans" :style="{'font-size': `${tlyricSize}px`}" v-if="item.tlyric && lyricType.includes('trans')">{{item.tlyric}}</span>
+                  <span class="roma" :style="{'font-size': `${rlyricSize}px`}" v-if="item.rlyric && lyricPreferences.includes('roma')">{{item.rlyric}}</span>
+                  <span class="original" :style="{'font-size': `${lyricSize}px`}" v-if="lyricPreferences.includes('original')">{{item.lyric}}</span>
+                  <span class="trans" :style="{'font-size': `${tlyricSize}px`}" v-if="item.tlyric && lyricPreferences.includes('trans')">{{item.tlyric}}</span>
                 </div>
                 <div class="hilight" :class="{'hilight-active': index === activeIndex}"></div>
               </div>
@@ -381,7 +310,7 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
     <Transition name="fade">
-      <div v-show="!lyricsObjArr || !lyricType.includes('original')" class="lyric-nodata">
+      <div v-show="!lyricsObjArr || !lyricPreferences.includes('original')" class="lyric-nodata">
           <div class="line1"></div>
           <span class="tip">Lyric-Area</span>
           <div class="line2"></div>

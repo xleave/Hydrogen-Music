@@ -1,12 +1,13 @@
 mod audio;
+mod file_replace;
 mod library;
 mod library_snapshot;
 mod media;
 mod storage;
+mod track_assets;
 
-use base64::{engine::general_purpose::STANDARD, Engine};
 use lofty::{file::TaggedFileExt, read_from_path, tag::ItemKey};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -30,9 +31,6 @@ use tauri_plugin_opener::OpenerExt;
 #[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-const MAX_COVER_BYTES: usize = 16 * 1024 * 1024;
-const MAX_COVER_DIMENSION: u32 = 8192;
-const MAX_COVER_PIXELS: u64 = 32 * 1024 * 1024;
 const MAX_LYRICS_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_FRONTEND_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_CRASH_LOG_BYTES: u64 = 2 * 1024 * 1024;
@@ -382,7 +380,10 @@ async fn select_local_folder(
 }
 
 #[tauri::command]
-async fn get_cached_library(settings: State<'_, SettingsState>) -> Result<Option<Value>, String> {
+async fn get_cached_library(
+    app: AppHandle,
+    settings: State<'_, SettingsState>,
+) -> Result<Option<Value>, String> {
     let stored = settings
         .0
         .read()
@@ -392,13 +393,18 @@ async fn get_cached_library(settings: State<'_, SettingsState>) -> Result<Option
     if folders.len() != stored.len() {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || library_snapshot::load(&folders))
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || library_snapshot::load(&cache_directory, &folders))
         .await
         .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 async fn scan_local_music(
+    app: AppHandle,
     settings: State<'_, SettingsState>,
     scan: State<'_, ScanState>,
 ) -> Result<library::ScanResult, String> {
@@ -413,9 +419,14 @@ async fn scan_local_music(
     // Native ownership prevents a WebView reload from resetting the generation
     // below the long-lived Rust process state.
     let request_id = latest.fetch_add(1, Ordering::AcqRel) + 1;
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = library::scan(&folders, request_id, &latest, roots_complete)?;
-        if let Err(error) = library_snapshot::save(&folders, &result) {
+        let index_path = cache_directory.join("library-index.sqlite3");
+        let result = library::scan(&folders, request_id, &latest, roots_complete, &index_path)?;
+        if let Err(error) = library_snapshot::save(&cache_directory, &folders, &result) {
             eprintln!("[library snapshot] failed to persist cache: {error}");
         }
         Ok(result)
@@ -424,99 +435,9 @@ async fn scan_local_music(
     .map_err(|error| error.to_string())?
 }
 
-fn cover_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-    if data.starts_with(b"\x89PNG\r\n\x1a\n") && data.len() >= 24 {
-        return Some((
-            u32::from_be_bytes(data[16..20].try_into().ok()?),
-            u32::from_be_bytes(data[20..24].try_into().ok()?),
-        ));
-    }
-    if data.starts_with(b"GIF8") && data.len() >= 10 {
-        return Some((
-            u16::from_le_bytes(data[6..8].try_into().ok()?) as u32,
-            u16::from_le_bytes(data[8..10].try_into().ok()?) as u32,
-        ));
-    }
-    if data.starts_with(b"BM") && data.len() >= 26 {
-        let width = i32::from_le_bytes(data[18..22].try_into().ok()?).unsigned_abs();
-        let height = i32::from_le_bytes(data[22..26].try_into().ok()?).unsigned_abs();
-        return Some((width, height));
-    }
-    if data.starts_with(b"\xff\xd8\xff") {
-        let mut cursor = 2usize;
-        while cursor + 4 <= data.len() {
-            if data[cursor] != 0xff {
-                cursor += 1;
-                continue;
-            }
-            while cursor < data.len() && data[cursor] == 0xff {
-                cursor += 1;
-            }
-            if cursor >= data.len() {
-                break;
-            }
-            let marker = data[cursor];
-            cursor += 1;
-            if marker == 0xd8 || marker == 0xd9 || marker == 0x01 {
-                continue;
-            }
-            if cursor + 2 > data.len() {
-                break;
-            }
-            let segment_len =
-                u16::from_be_bytes(data[cursor..cursor + 2].try_into().ok()?) as usize;
-            if segment_len < 2 || cursor + segment_len > data.len() {
-                break;
-            }
-            if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf)
-                && segment_len >= 7
-            {
-                let height =
-                    u16::from_be_bytes(data[cursor + 3..cursor + 5].try_into().ok()?) as u32;
-                let width =
-                    u16::from_be_bytes(data[cursor + 5..cursor + 7].try_into().ok()?) as u32;
-                return Some((width, height));
-            }
-            cursor += segment_len;
-        }
-    }
-    None
-}
-
-fn validate_cover_dimensions(data: &[u8]) -> Result<(), String> {
-    let Some((width, height)) = cover_dimensions(data) else {
-        return Ok(());
-    };
-    let pixels = u64::from(width) * u64::from(height);
-    if width == 0
-        || height == 0
-        || width > MAX_COVER_DIMENSION
-        || height > MAX_COVER_DIMENSION
-        || pixels > MAX_COVER_PIXELS
-    {
-        return Err("embedded cover dimensions are too large".to_string());
-    }
-    Ok(())
-}
-
 fn read_cover_blocking(folders: Vec<PathBuf>, file_path: String) -> Result<Option<String>, String> {
     let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
-    let Ok(tagged) = read_from_path(&file_path) else {
-        return Ok(None);
-    };
-    let picture = tagged.tags().iter().find_map(|tag| tag.pictures().first());
-    let Some(picture) = picture else {
-        return Ok(None);
-    };
-    if picture.data().len() > MAX_COVER_BYTES {
-        return Err("embedded cover is too large".to_string());
-    }
-    validate_cover_dimensions(picture.data())?;
-    let mime = cover_mime(picture.data());
-    Ok(Some(format!(
-        "data:{mime};base64,{}",
-        STANDARD.encode(picture.data())
-    )))
+    track_assets::read_cover_data_url(&file_path)
 }
 
 #[tauri::command]
@@ -528,97 +449,6 @@ async fn read_cover(
     tauri::async_runtime::spawn_blocking(move || read_cover_blocking(folders, file_path))
         .await
         .map_err(|error| error.to_string())?
-}
-
-fn materialize_media_cover_blocking(
-    app: AppHandle,
-    folders: Vec<PathBuf>,
-    file_path: String,
-) -> Result<Option<String>, String> {
-    let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
-    let Ok(tagged) = read_from_path(&file_path) else {
-        return Ok(None);
-    };
-    let picture = tagged.tags().iter().find_map(|tag| tag.pictures().first());
-    let Some(picture) = picture else {
-        return Ok(None);
-    };
-    if picture.data().len() > MAX_COVER_BYTES {
-        return Err("embedded cover is too large".to_string());
-    }
-    validate_cover_dimensions(picture.data())?;
-
-    let extension = match cover_mime(picture.data()) {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/bmp" => "bmp",
-        "image/tiff" => "tiff",
-        _ => return Ok(None),
-    };
-
-    let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&file_path, &mut hasher);
-    std::hash::Hash::hash(&metadata.len(), &mut hasher);
-    if let Ok(modified) = metadata.modified() {
-        if let Ok(stamp) = modified.duration_since(std::time::UNIX_EPOCH) {
-            std::hash::Hash::hash(&stamp.as_nanos(), &mut hasher);
-        }
-    }
-    let key = std::hash::Hasher::finish(&hasher);
-
-    let directory = app
-        .path()
-        .app_cache_dir()
-        .map_err(|error| error.to_string())?
-        .join("mpris-artwork");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let target = directory.join(format!("{key:016x}.{extension}"));
-    let needs_write = std::fs::metadata(&target)
-        .map(|cached| cached.len() != picture.data().len() as u64)
-        .unwrap_or(true);
-    if needs_write {
-        std::fs::write(&target, picture.data()).map_err(|error| error.to_string())?;
-    }
-
-    let mut cached = std::fs::read_dir(&directory)
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path == target || !path.is_file() {
-                return None;
-            }
-            let modified = entry.metadata().ok()?.modified().ok()?;
-            Some((modified, path))
-        })
-        .collect::<Vec<_>>();
-    cached.sort_by_key(|(modified, _)| *modified);
-    let remove_count = cached.len().saturating_sub(31);
-    for (_, path) in cached.into_iter().take(remove_count) {
-        let _ = std::fs::remove_file(path);
-    }
-
-    let url = tauri::Url::from_file_path(&target)
-        .map_err(|_| "failed to create MPRIS artwork file URL".to_string())?;
-    Ok(Some(url.to_string()))
-}
-
-fn cover_mime(data: &[u8]) -> &'static str {
-    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "image/png"
-    } else if data.starts_with(b"\xff\xd8\xff") {
-        "image/jpeg"
-    } else if data.starts_with(b"GIF8") {
-        "image/gif"
-    } else if data.starts_with(b"BM") {
-        "image/bmp"
-    } else if data.starts_with(b"II*\0") || data.starts_with(b"MM\0*") {
-        "image/tiff"
-    } else {
-        "application/octet-stream"
-    }
 }
 
 fn read_lyrics_blocking(
@@ -723,6 +553,13 @@ fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
     audio.stop()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaMetadataResult {
+    applied: bool,
+    cover_data_url: Option<String>,
+}
+
 #[tauri::command]
 async fn media_set_metadata(
     app: AppHandle,
@@ -732,23 +569,59 @@ async fn media_set_metadata(
     album: String,
     duration: f64,
     file_path: Option<String>,
-) -> Result<(), String> {
+) -> Result<MediaMetadataResult, String> {
+    let generation = media.reserve_metadata()?;
     let duration = finite(duration, "duration")?.clamp(0.0, MAX_AUDIO_SECONDS);
     let title = bounded_text(&title, MAX_TEXT_CHARS);
     let artist = bounded_text(&artist, MAX_TEXT_CHARS);
     let album = bounded_text(&album, MAX_TEXT_CHARS);
-    let cover_url = if let Some(file_path) = file_path {
+    let assets = if let Some(file_path) = file_path {
         let settings = app.state::<SettingsState>();
         let folders = configured_music_folders(settings.inner())?;
-        tauri::async_runtime::spawn_blocking(move || {
-            materialize_media_cover_blocking(app, folders, file_path)
-        })
+        let cache_directory = app
+            .path()
+            .app_cache_dir()
+            .map_err(|error| error.to_string())?;
+        tauri::async_runtime::spawn_blocking(
+            move || -> Result<track_assets::TrackAssets, String> {
+                let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
+                Ok(
+                    match track_assets::read_for_media(&cache_directory, &file_path, generation) {
+                        Ok(assets) => assets,
+                        Err(error) => {
+                            eprintln!("[media artwork] ignored: {error}");
+                            track_assets::TrackAssets::default()
+                        }
+                    },
+                )
+            },
+        )
         .await
         .map_err(|error| error.to_string())??
     } else {
-        None
+        track_assets::TrackAssets::default()
     };
-    media.set_metadata(&title, &artist, &album, duration, cover_url.as_deref())
+    let cover_url = assets
+        .media_cover_path
+        .as_ref()
+        .map(|path| {
+            tauri::Url::from_file_path(path)
+                .map(|url| url.to_string())
+                .map_err(|_| "failed to create MPRIS artwork file URL".to_string())
+        })
+        .transpose()?;
+    let applied = media.set_metadata_if_current(
+        generation,
+        &title,
+        &artist,
+        &album,
+        duration,
+        cover_url.as_deref(),
+    )?;
+    Ok(MediaMetadataResult {
+        applied,
+        cover_data_url: if applied { assets.cover_data_url } else { None },
+    })
 }
 
 #[tauri::command]
@@ -1084,7 +957,16 @@ async fn quit_app(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Single-instance must be the first plugin so a second process exits
+    // before it can claim the desktop media service name.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        show_window(app);
+    }));
+
+    let builder = builder
         .manage(audio::AudioState::default())
         .manage(ScanState(Arc::new(AtomicU64::new(0))))
         .manage(PersistenceState::default())

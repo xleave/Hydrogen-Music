@@ -160,7 +160,7 @@ export async function play(filePath, autoplay, requestId = trackRequestId) {
   music.loop(playMode.value === 2)
   currentMusic.value = music
   time.value = Math.floor(status.duration)
-  updateMediaSession()
+  updateMediaSession(requestId).catch((error) => reportAudioError('media.metadata', error))
   playing.value = status.playing
   playPending = false
   windowApi.playOrPauseMusicCheck(status.playing)
@@ -168,44 +168,50 @@ export async function play(filePath, autoplay, requestId = trackRequestId) {
   return music
 }
 
-export function updateMediaSession() {
+export async function updateMediaSession(requestId = trackRequestId) {
   const track = currentTrack()
-  if (!track) return
-  coverUrl.value = localBase64Img.value || null
+  if (!track) return false
   const metadata = {
     title: track.name || track.localName || '',
     artist: (track.ar || []).map((artist) => artist.name).join(', '),
     album: track.album || '',
   }
-  windowApi.setSystemMediaMetadata({ ...metadata, duration: time.value, filePath: track.url }).catch((error) => reportAudioError('media.metadata', error))
-  if (!('mediaSession' in navigator) || !('MediaMetadata' in window)) return
-  if (coverUrl.value) metadata.artwork = [{ src: coverUrl.value }]
-  navigator.mediaSession.metadata = new MediaMetadata(metadata)
+  if ('mediaSession' in navigator && 'MediaMetadata' in window) {
+    navigator.mediaSession.metadata = new MediaMetadata(metadata)
+  }
+
+  const result = await windowApi.setSystemMediaMetadata({
+    ...metadata,
+    duration: time.value,
+    filePath: track.url,
+  })
+  if (requestId !== trackRequestId || !result?.applied) return false
+
+  const cover = result.coverDataUrl || null
+  localBase64Img.value = cover
+  coverUrl.value = cover
+  if ('mediaSession' in navigator && 'MediaMetadata' in window) {
+    if (cover) metadata.artwork = [{ src: cover }]
+    navigator.mediaSession.metadata = new MediaMetadata(metadata)
+  }
+  if (!cover) {
+    coverBackdropUrl.value = null
+    return true
+  }
+
+  createCoverBackdrop(cover).then((backdrop) => {
+    if (requestId === trackRequestId) coverBackdropUrl.value = backdrop
+  }).catch((error) => {
+    reportAudioError('cover.backdrop', error)
+    if (requestId === trackRequestId) coverBackdropUrl.value = cover
+  })
+  return true
 }
 
 export async function getSongUrl(index, autoplay) {
   const track = songList.value?.[index]
   if (!track) return null
   const requestId = ++trackRequestId
-
-  windowApi.getLocalMusicImage(track.url).then((cover) => {
-    if (requestId !== trackRequestId) return
-    localBase64Img.value = cover
-    updateMediaSession()
-
-    if (!cover) {
-      coverBackdropUrl.value = null
-      return
-    }
-
-    createCoverBackdrop(cover).then((backdrop) => {
-      if (requestId !== trackRequestId) return
-      coverBackdropUrl.value = backdrop
-    }).catch((error) => {
-      reportAudioError('cover.backdrop', error)
-      if (requestId === trackRequestId) coverBackdropUrl.value = cover
-    })
-  }).catch((error) => reportAudioError('cover.load', error))
 
   loadLocalLyrics(track.url, requestId, () => trackRequestId)
     .then((applied) => { if (applied) revealLyrics() })

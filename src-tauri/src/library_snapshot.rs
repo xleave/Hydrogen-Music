@@ -6,23 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::file_replace;
+
 const MAX_SNAPSHOT_BYTES: u64 = 128 * 1024 * 1024;
 const SNAPSHOT_VERSION: u64 = 2;
 
-fn cache_directory() -> Option<PathBuf> {
-    if let Some(cache_home) = std::env::var_os("XDG_CACHE_HOME") {
-        if !cache_home.is_empty() {
-            return Some(PathBuf::from(cache_home).join("hydrogen-music"));
-        }
-    }
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .map(|home| home.join(".cache/hydrogen-music"))
-}
-
-fn snapshot_path() -> Option<PathBuf> {
-    cache_directory().map(|directory| directory.join("library-snapshot.json"))
+fn snapshot_path(cache_directory: &Path) -> PathBuf {
+    cache_directory.join("library-snapshot.json")
 }
 
 fn normalized_roots(roots: &[PathBuf]) -> Vec<String> {
@@ -41,10 +31,9 @@ fn quarantine(path: &Path) {
     let _ = fs::rename(path, corrupt);
 }
 
-pub fn load(roots: &[PathBuf]) -> Result<Option<Value>, String> {
-    let Some(path) = snapshot_path() else {
-        return Ok(None);
-    };
+pub fn load(cache_directory: &Path, roots: &[PathBuf]) -> Result<Option<Value>, String> {
+    let path = snapshot_path(cache_directory);
+    file_replace::recover_backup(&path)?;
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -92,7 +81,11 @@ pub fn load(roots: &[PathBuf]) -> Result<Option<Value>, String> {
     Ok(result)
 }
 
-pub fn save<T: Serialize>(roots: &[PathBuf], result: &T) -> Result<(), String> {
+pub fn save<T: Serialize>(
+    cache_directory: &Path,
+    roots: &[PathBuf],
+    result: &T,
+) -> Result<(), String> {
     let result = serde_json::to_value(result).map_err(|error| error.to_string())?;
     if result.get("complete").and_then(Value::as_bool) != Some(true)
         || result
@@ -103,9 +96,7 @@ pub fn save<T: Serialize>(roots: &[PathBuf], result: &T) -> Result<(), String> {
         return Ok(());
     }
 
-    let Some(path) = snapshot_path() else {
-        return Ok(());
-    };
+    let path = snapshot_path(cache_directory);
     let parent = path
         .parent()
         .ok_or_else(|| "invalid library snapshot path".to_string())?;
@@ -131,20 +122,49 @@ pub fn save<T: Serialize>(roots: &[PathBuf], result: &T) -> Result<(), String> {
         file.write_all(&bytes).map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
-    if cfg!(windows) && path.exists() {
-        let _ = fs::remove_file(&path);
-    }
-    fs::rename(&temporary, &path).map_err(|error| error.to_string())
+    file_replace::replace(&temporary, &path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_CACHE: AtomicU64 = AtomicU64::new(0);
+
+    fn temporary_cache_directory() -> PathBuf {
+        let id = NEXT_CACHE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "hydrogen-music-library-snapshot-{}-{id}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
 
     #[test]
     fn root_signatures_ignore_order() {
         let first = vec![PathBuf::from("/b"), PathBuf::from("/a")];
         let second = vec![PathBuf::from("/a"), PathBuf::from("/b")];
         assert_eq!(normalized_roots(&first), normalized_roots(&second));
+    }
+
+    #[test]
+    fn snapshot_round_trip_uses_the_supplied_cache_directory() {
+        let cache_directory = temporary_cache_directory();
+        let roots = vec![PathBuf::from("/music")];
+        let result = json!({
+            "complete": true,
+            "truncated": false,
+            "count": 0,
+            "dirTree": [],
+            "locaFilesMetadata": [],
+        });
+
+        save(&cache_directory, &roots, &result).unwrap();
+
+        assert_eq!(load(&cache_directory, &roots).unwrap(), Some(result));
+        assert!(cache_directory.join("library-snapshot.json").is_file());
+        fs::remove_dir_all(cache_directory).unwrap();
     }
 }
