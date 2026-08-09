@@ -30,6 +30,11 @@ function reportAudioError(source, error) {
   windowApi.reportFrontendError(source, detail).catch((reportError) => console.error('[audio error reporter]', reportError))
 }
 
+function syncSystemPlayback(status) {
+  return windowApi.setSystemMediaPlayback(status.playing, status.position)
+    .catch((error) => reportAudioError('media.playback', error))
+}
+
 function checkpointPlayback() {
   try {
     const result = playbackCheckpointHandler?.()
@@ -67,7 +72,7 @@ class NativeMusic {
     windowApi.audioSeek(target).then((status) => {
       this.applyStatus(status)
       if (this === currentMusic.value) progress.value = status.position
-      windowApi.playOrPauseMusicCheck(status.playing)
+      syncSystemPlayback(status)
       checkpointPlayback()
     }).catch((error) => {
       reportAudioError('audio.seek', error)
@@ -138,7 +143,7 @@ function handleTrackEnd() {
   if (playMode.value === 0 && currentIndex.value >= songList.value.length - 1) {
     playing.value = false
     sequentialPlaybackEnded = true
-    windowApi.playOrPauseMusicCheck(false)
+    syncSystemPlayback({ playing: false, position: progress.value })
     checkpointPlayback()
     return
   }
@@ -161,7 +166,7 @@ export async function play(filePath, autoplay, requestId = trackRequestId) {
   updateMediaSession(requestId).catch((error) => reportAudioError('media.metadata', error))
   playing.value = status.playing
   playPending = false
-  windowApi.playOrPauseMusicCheck(status.playing)
+  syncSystemPlayback(status)
   if (status.playing) startProgress()
   return music
 }
@@ -244,7 +249,7 @@ export function startMusic() {
       if (music !== currentMusic.value) return
       playPending = false
       playing.value = status.playing
-      windowApi.playOrPauseMusicCheck(status.playing)
+      syncSystemPlayback(status)
       if (status.playing) startProgress()
       checkpointPlayback()
     }).catch((error) => {
@@ -266,16 +271,20 @@ export function pauseMusic() {
 
   invalidateTrackRequest()
   playing.value = false
-  windowApi.playOrPauseMusicCheck(false)
 
   if (currentMusic.value) {
     currentMusic.value.pause()
-      .then(() => checkpointPlayback())
+      .then((status) => {
+        syncSystemPlayback(status)
+        checkpointPlayback()
+      })
       .catch((error) => {
         if (!hadPendingLoad || !String(error).includes('no audio is loaded')) reportAudioError('audio.pause', error)
       })
   } else {
-    windowApi.audioStop().catch((error) => reportAudioError('audio.stop', error))
+    windowApi.audioStop()
+      .then(() => windowApi.setSystemMediaStopped())
+      .catch((error) => reportAudioError('audio.stop', error))
   }
 }
 

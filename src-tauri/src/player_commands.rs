@@ -185,15 +185,13 @@ pub(crate) async fn media_set_metadata(
 }
 
 #[tauri::command]
-pub(crate) async fn media_set_playback(
-    audio: State<'_, audio::AudioState>,
+pub(crate) fn media_set_playback(
     media: State<'_, media::MediaState>,
     playing: bool,
+    position: f64,
 ) -> Result<(), String> {
-    match run_audio_blocking(audio.inner().clone(), |audio| audio.status_position()).await {
-        Ok(position) => media.set_playback(playing, position),
-        Err(_) => media.set_stopped(),
-    }
+    let position = finite(position, "position")?.clamp(0.0, MAX_AUDIO_SECONDS);
+    media.set_playback(playing, position)
 }
 
 #[tauri::command]
