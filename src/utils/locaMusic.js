@@ -54,7 +54,10 @@ function classify(arr) {
 
 export function scanMusic(params) {
     if (isRefreshLocalFile.value) noticeOpen('正在扫描本地音乐,请稍等', 3)
-    return windowApi.scanLocalMusic(params).catch((error) => {
+    return windowApi.scanLocalMusic({
+        ...params,
+        knownRevision: localStore.libraryRevision,
+    }).catch((error) => {
         console.error('[local scan]', error)
         if (isRefreshLocalFile.value) isRefreshLocalFile.value = false
         noticeOpen('本地音乐扫描失败', 3)
@@ -66,11 +69,16 @@ windowApi.localMusicCount((event, count) => {
 })
 
 windowApi.localMusicFiles((event, localData) => {
-    if (localData.type === 'local') {
+    if (localData.type === 'local' && localData.unchanged !== true) {
         artistMap = new Map()
         albumMap = new Map()
         const classified = classify(localData.locaFilesMetadata)
-        localStore.setLibraryData(localData.dirTree, localData.locaFilesMetadata, classified)
+        localStore.setLibraryData(
+            localData.dirTree,
+            localData.locaFilesMetadata,
+            classified,
+            localData.revision || null,
+        )
         libraryStore.clearExpandedFolders()
         // Cached snapshots are complete by construction. A live scan can be
         // partial when a removable/NAS root is temporarily unavailable or a

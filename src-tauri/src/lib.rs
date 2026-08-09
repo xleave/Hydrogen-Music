@@ -408,7 +408,8 @@ async fn scan_local_music(
     app: AppHandle,
     settings: State<'_, SettingsState>,
     scan: State<'_, ScanState>,
-) -> Result<library::ScanResult, String> {
+    known_revision: Option<String>,
+) -> Result<library::ScanResponse, String> {
     let stored = settings
         .0
         .read()
@@ -427,10 +428,12 @@ async fn scan_local_music(
     tauri::async_runtime::spawn_blocking(move || {
         let index_path = cache_directory.join("library-index.sqlite3");
         let result = library::scan(&folders, request_id, &latest, roots_complete, &index_path)?;
-        if let Err(error) = library_snapshot::save(&cache_directory, &folders, &result) {
-            eprintln!("[library snapshot] failed to persist cache: {error}");
+        if !result.matches_revision(known_revision.as_deref()) {
+            if let Err(error) = library_snapshot::save(&cache_directory, &folders, &result) {
+                eprintln!("[library snapshot] failed to persist cache: {error}");
+            }
         }
-        Ok(result)
+        Ok(result.into_response(known_revision.as_deref()))
     })
     .await
     .map_err(|error| error.to_string())?

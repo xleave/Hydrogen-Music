@@ -215,7 +215,9 @@ async function getCachedLibrary(params = {}) {
 async function scanLocalMusic(params = {}) {
   const requestId = ++scanRequestId
   try {
-    const result = await invoke('scan_local_music')
+    const result = await invoke('scan_local_music', {
+      knownRevision: params.knownRevision || null,
+    })
     if (requestId !== scanRequestId) return null
     emit('localMusicCount', result.count)
     emit('localMusicFiles', { ...result, type: params.type, cached: false })

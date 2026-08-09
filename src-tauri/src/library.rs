@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -40,6 +40,44 @@ pub struct ScanResult {
     count: usize,
     truncated: bool,
     complete: bool,
+    revision: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnchangedScanResult {
+    unchanged: bool,
+    count: usize,
+    truncated: bool,
+    complete: bool,
+    revision: String,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum ScanResponse {
+    Full(ScanResult),
+    Unchanged(UnchangedScanResult),
+}
+
+impl ScanResult {
+    pub fn matches_revision(&self, known_revision: Option<&str>) -> bool {
+        self.complete && known_revision == Some(self.revision.as_str())
+    }
+
+    pub fn into_response(self, known_revision: Option<&str>) -> ScanResponse {
+        if self.matches_revision(known_revision) {
+            ScanResponse::Unchanged(UnchangedScanResult {
+                unchanged: true,
+                count: self.count,
+                truncated: self.truncated,
+                complete: self.complete,
+                revision: self.revision,
+            })
+        } else {
+            ScanResponse::Full(self)
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -85,7 +123,7 @@ struct FormatMetadata {
     sample_rate: Option<u32>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Fingerprint {
     size: u64,
     modified_ms: u64,
@@ -102,7 +140,7 @@ struct CachedTrack {
 struct ScanCache {
     entries: HashMap<String, CachedTrack>,
     updates: Mutex<Vec<(String, CachedTrack)>>,
-    seen: Mutex<HashSet<String>>,
+    seen: Mutex<HashMap<String, Option<Fingerprint>>>,
 }
 
 impl ScanCache {
@@ -110,13 +148,13 @@ impl ScanCache {
         Self {
             entries,
             updates: Mutex::new(Vec::new()),
-            seen: Mutex::new(HashSet::new()),
+            seen: Mutex::new(HashMap::new()),
         }
     }
 
-    fn remember_seen(&self, path: &str) {
+    fn remember_seen(&self, path: &str, fingerprint: Option<Fingerprint>) {
         if let Ok(mut seen) = self.seen.lock() {
-            seen.insert(path.to_owned());
+            seen.insert(path.to_owned(), fingerprint);
         }
     }
 
@@ -229,6 +267,7 @@ pub fn scan(
     let count = results.iter().map(|(_, c)| c).sum();
     let metadata_roots: Vec<Node> = results.into_iter().map(|(n, _)| n).collect();
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
+    let revision = library_revision(&metadata_roots, &cache);
 
     let complete = roots_complete && budget.may_prune_cache();
     if let Err(error) = persist_index(index_path, &cache, complete) {
@@ -241,6 +280,7 @@ pub fn scan(
         count,
         truncated: budget.truncated.load(Ordering::Acquire),
         complete,
+        revision,
     })
 }
 
@@ -410,6 +450,48 @@ fn stable_track_id(path: &Path) -> String {
     format!("track:{first:016x}{second:016x}")
 }
 
+fn hash_revision_field(value: &[u8], first: &mut u64, second: &mut u64) {
+    let length = (value.len() as u64).to_le_bytes();
+    *first = fnv1a(length.into_iter().chain(value.iter().copied()), *first);
+    *second = fnv1a(value.iter().rev().copied().chain(length), *second);
+}
+
+fn hash_revision_nodes(
+    nodes: &[Node],
+    seen: &HashMap<String, Option<Fingerprint>>,
+    first: &mut u64,
+    second: &mut u64,
+) {
+    for node in nodes {
+        hash_revision_field(node.node_type.as_bytes(), first, second);
+        hash_revision_field(node.dir_path.as_bytes(), first, second);
+        if let Some(Some(fingerprint)) = seen.get(&node.dir_path) {
+            for value in [
+                fingerprint.size,
+                fingerprint.modified_ms,
+                fingerprint.lrc_size,
+                fingerprint.lrc_modified_ms,
+            ] {
+                hash_revision_field(&value.to_le_bytes(), first, second);
+            }
+        }
+        if let Some(children) = node.children.as_deref() {
+            hash_revision_nodes(children, seen, first, second);
+        }
+    }
+}
+
+fn library_revision(nodes: &[Node], cache: &ScanCache) -> String {
+    let mut first = 0xcbf29ce484222325;
+    let mut second = 0x84222325cbf29ce4;
+    if let Ok(seen) = cache.seen.lock() {
+        hash_revision_nodes(nodes, &seen, &mut first, &mut second);
+    } else {
+        hash_revision_nodes(nodes, &HashMap::new(), &mut first, &mut second);
+    }
+    format!("{first:016x}{second:016x}")
+}
+
 fn modified_ms(metadata: &fs::Metadata) -> u64 {
     metadata
         .modified()
@@ -432,9 +514,10 @@ fn fingerprint(path: &Path) -> Option<Fingerprint> {
 
 fn read_track_cached(path: &Path, cache: &ScanCache) -> Node {
     let path_string = path.to_string_lossy().into_owned();
-    cache.remember_seen(&path_string);
+    let current = fingerprint(path);
+    cache.remember_seen(&path_string, current);
 
-    if let Some(current) = fingerprint(path) {
+    if let Some(current) = current {
         if let Some(cached) = cache.entries.get(&path_string) {
             if cached.fingerprint == current {
                 return cached.node.clone();
@@ -558,7 +641,7 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
         cache
             .entries
             .keys()
-            .filter(|path| !seen.contains(*path))
+            .filter(|path| !seen.contains_key(*path))
             .cloned()
             .collect::<Vec<_>>()
     } else {
@@ -798,6 +881,65 @@ mod tests {
         assert_eq!(first, second);
         assert!(first.starts_with("track:"));
         assert_eq!(first.len(), 38);
+    }
+
+    #[test]
+    fn library_revision_changes_when_a_track_fingerprint_changes() {
+        let path = Path::new("/music/example/song.flac");
+        let path_string = path.to_string_lossy();
+        let nodes = vec![fallback_track(path)];
+        let first_cache = ScanCache::new(HashMap::new());
+        first_cache.remember_seen(
+            &path_string,
+            Some(Fingerprint {
+                size: 100,
+                modified_ms: 200,
+                lrc_size: 0,
+                lrc_modified_ms: 0,
+            }),
+        );
+        let second_cache = ScanCache::new(HashMap::new());
+        second_cache.remember_seen(
+            &path_string,
+            Some(Fingerprint {
+                size: 101,
+                modified_ms: 200,
+                lrc_size: 0,
+                lrc_modified_ms: 0,
+            }),
+        );
+
+        assert_ne!(
+            library_revision(&nodes, &first_cache),
+            library_revision(&nodes, &second_cache)
+        );
+    }
+
+    #[test]
+    fn matching_revision_returns_only_the_scan_summary() {
+        let result = ScanResult {
+            dir_tree: vec![fallback_track(Path::new("/music/example/song.flac"))],
+            loca_files_metadata: vec![fallback_track(Path::new("/music/example/song.flac"))],
+            count: 1,
+            truncated: false,
+            complete: true,
+            revision: "revision-1".into(),
+        };
+
+        let response = serde_json::to_value(result.into_response(Some("revision-1"))).unwrap();
+
+        assert_eq!(
+            response
+                .get("unchanged")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response.get("count").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(response.get("locaFilesMetadata").is_none());
+        assert!(response.get("dirTree").is_none());
     }
 
     #[test]

@@ -95,6 +95,7 @@ export const useLocalStore = defineStore('localStore', {
             localDirectoryTree: null,
             localMusicList: null,
             localMusicClassify: null,
+            libraryRevision: null,
 
             currentSelectedFile: {name: null},
 
@@ -109,7 +110,7 @@ export const useLocalStore = defineStore('localStore', {
         }
     },
     actions: {
-        setLibraryData(dirTree, filesMetadata, classifyData) {
+        setLibraryData(dirTree, filesMetadata, classifyData, revision = null) {
             const selectedType = this.currentType
             const selectedId = this.currentSelectedInfo?.id
                 || this.currentSelectedInfo?.dirPath
@@ -122,6 +123,7 @@ export const useLocalStore = defineStore('localStore', {
             this.localDirectoryTree = rawDirTree
             this.localMusicList = rawFilesMetadata
             this.localMusicClassify = rawClassifyData
+            this.libraryRevision = revision
 
             if (selectedType && selectedId) {
                 const query = selectedType === 'localFiles'
