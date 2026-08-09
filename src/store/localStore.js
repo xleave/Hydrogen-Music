@@ -14,6 +14,26 @@ let flattenedSongs = []
 let albumById = new Map()
 let artistById = new Map()
 let trackById = new Map()
+let trackSearchKeyByObject = new WeakMap()
+
+function trackSearchKey(track) {
+    if (!track || typeof track !== 'object') return ''
+    const cached = trackSearchKeyByObject.get(track)
+    if (cached !== undefined) return cached
+    const common = track.common || {}
+    const key = [
+        common.title,
+        common.localTitle,
+        common.album,
+        common.albumartist,
+        ...(common.artists || []),
+    ]
+        .filter(Boolean)
+        .join('\n')
+        .toLocaleLowerCase()
+    trackSearchKeyByObject.set(track, key)
+    return key
+}
 
 function addFolderAlias(map, key, value) {
     if (key != null && key !== '' && !map.has(key)) map.set(key, value)
@@ -48,6 +68,7 @@ function rebuildLibraryIndexes(filesMetadata, classifyData) {
     albumById = new Map()
     artistById = new Map()
     trackById = new Map()
+    trackSearchKeyByObject = new WeakMap()
 
     indexFolderTree(filesMetadata)
     for (const song of flattenedSongs) {
@@ -118,6 +139,11 @@ export const useLocalStore = defineStore('localStore', {
         },
         resolveTrackIds(trackIds) {
             return asRaw((trackIds || []).map((id) => trackById.get(id)).filter(Boolean))
+        },
+        filterTracks(tracks, query) {
+            const keyword = String(query || '').trim().toLocaleLowerCase()
+            if (!keyword) return tracks || []
+            return asRaw((tracks || []).filter((track) => trackSearchKey(track).includes(keyword)))
         },
         getFolderSongs(arr, folderId) {
             const item = folderById.get(folderId)
