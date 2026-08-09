@@ -8,6 +8,7 @@ mod library_snapshot;
 mod media;
 mod player_commands;
 mod storage;
+mod system_fonts;
 mod track_assets;
 
 use lofty::{file::TaggedFileExt, read_from_path, tag::ItemKey};
@@ -489,50 +490,6 @@ async fn read_lyrics(
         .map_err(|error| error.to_string())?
 }
 
-fn list_system_fonts_blocking() -> Result<Vec<String>, String> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::collections::BTreeSet;
-        use std::process::Command;
-
-        let program = if std::path::Path::new("/usr/bin/fc-list").is_file() {
-            "/usr/bin/fc-list"
-        } else {
-            "fc-list"
-        };
-        let output = Command::new(program)
-            .arg("--format=%{family}\n")
-            .output()
-            .map_err(|error| format!("failed to execute fc-list: {error}"))?;
-        if !output.status.success() {
-            return Err("fc-list returned a non-zero status".to_string());
-        }
-
-        let mut families = BTreeSet::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            for family in line.split(',') {
-                let family = family.trim();
-                if !family.is_empty() {
-                    families.insert(bounded_text(family, 256));
-                }
-            }
-        }
-        Ok(families.into_iter().collect())
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(Vec::new())
-    }
-}
-
-#[tauri::command]
-async fn list_system_fonts() -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(list_system_fonts_blocking)
-        .await
-        .map_err(|error| error.to_string())?
-}
-
 #[tauri::command]
 fn open_project_page(app: AppHandle) -> Result<(), String> {
     app.opener()
@@ -943,7 +900,7 @@ pub fn run() {
             player_commands::media_set_stopped,
             player_commands::media_clear,
             player_commands::media_set_volume,
-            list_system_fonts,
+            system_fonts::list_system_fonts,
             open_project_page,
             reveal_music_file,
             get_settings,
