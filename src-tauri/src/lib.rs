@@ -427,20 +427,36 @@ async fn scan_local_music(
     .map_err(|error| error.to_string())?
 }
 
-fn read_cover_blocking(folders: Vec<PathBuf>, file_path: String) -> Result<Option<String>, String> {
+fn read_cover_blocking(
+    folders: Vec<PathBuf>,
+    cache_directory: PathBuf,
+    cache: track_assets::CoverCache,
+    file_path: String,
+) -> Result<Option<String>, String> {
     let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
-    track_assets::read_cover_data_url(&file_path)
+    cache
+        .read(&cache_directory, &file_path)
+        .map(|path| path.map(|path| path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
 async fn read_cover(
+    app: AppHandle,
     settings: State<'_, SettingsState>,
+    cache: State<'_, track_assets::CoverCache>,
     file_path: String,
 ) -> Result<Option<String>, String> {
     let folders = configured_music_folders(&settings)?;
-    tauri::async_runtime::spawn_blocking(move || read_cover_blocking(folders, file_path))
-        .await
-        .map_err(|error| error.to_string())?
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    let cache = cache.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_cover_blocking(folders, cache_directory, cache, file_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn read_lyrics_blocking(
@@ -823,6 +839,7 @@ pub fn run() {
             // System media integration is optional. D-Bus/SMTC initialization
             // failure must never make the native audio player itself fail.
             app.manage(media::MediaState::new(app.handle()));
+            app.manage(track_assets::CoverCache::default());
 
             let log_directory = app.path().app_log_dir()?;
             std::fs::create_dir_all(&log_directory)?;

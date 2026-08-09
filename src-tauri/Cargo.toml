@@ -13,7 +13,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-base64 = "0.22"
 lofty = "0.24"
 rayon = "1"
 rodio = { version = "0.22.2", features = ["symphonia-all"] }
