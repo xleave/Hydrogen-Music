@@ -521,40 +521,49 @@ async fn audio_load(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
-fn audio_play(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    audio.play()
-}
-
-#[tauri::command]
-fn audio_pause(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    audio.pause()
-}
-
-#[tauri::command]
-fn audio_seek(
-    audio: State<'_, audio::AudioState>,
-    position: f64,
-) -> Result<audio::AudioStatus, String> {
-    audio.seek(finite(position, "position")?.clamp(0.0, MAX_AUDIO_SECONDS))
-}
-
-#[tauri::command]
-fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<(), String> {
-    audio.set_volume(finite_f32(volume, "volume")?.clamp(0.0, 1.0))
-}
-
-#[tauri::command]
-async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    let audio = audio.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || audio.status())
+async fn run_audio_blocking<T, F>(audio: audio::AudioState, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&audio::AudioState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || operation(&audio))
         .await
         .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
-    audio.stop()
+async fn audio_play(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.play()).await
+}
+
+#[tauri::command]
+async fn audio_pause(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.pause()).await
+}
+
+#[tauri::command]
+async fn audio_seek(
+    audio: State<'_, audio::AudioState>,
+    position: f64,
+) -> Result<audio::AudioStatus, String> {
+    let position = finite(position, "position")?.clamp(0.0, MAX_AUDIO_SECONDS);
+    run_audio_blocking(audio.inner().clone(), move |audio| audio.seek(position)).await
+}
+
+#[tauri::command]
+async fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<(), String> {
+    let volume = finite_f32(volume, "volume")?.clamp(0.0, 1.0);
+    run_audio_blocking(audio.inner().clone(), move |audio| audio.set_volume(volume)).await
+}
+
+#[tauri::command]
+async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.status()).await
+}
+
+#[tauri::command]
+async fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.stop()).await
 }
 
 #[derive(Serialize)]
@@ -629,15 +638,15 @@ async fn media_set_metadata(
 }
 
 #[tauri::command]
-fn media_set_playback(
+async fn media_set_playback(
     audio: State<'_, audio::AudioState>,
     media: State<'_, media::MediaState>,
     playing: bool,
 ) -> Result<(), String> {
-    if audio.status().is_err() {
-        return media.set_stopped();
+    match run_audio_blocking(audio.inner().clone(), |audio| audio.status_position()).await {
+        Ok(position) => media.set_playback(playing, position),
+        Err(_) => media.set_stopped(),
     }
-    media.set_playback(playing, audio.position())
 }
 
 #[tauri::command]
