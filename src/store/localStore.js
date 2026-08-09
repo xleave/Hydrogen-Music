@@ -16,6 +16,7 @@ let artistById = new Map()
 let trackById = new Map()
 let trackSearchKeyByObject = new WeakMap()
 let trackModifiedOrderByList = new WeakMap()
+let trackFilterStateByList = new WeakMap()
 
 function trackSearchKey(track) {
     if (!track || typeof track !== 'object') return ''
@@ -146,7 +147,15 @@ export const useLocalStore = defineStore('localStore', {
         filterTracks(tracks, query) {
             const keyword = String(query || '').trim().toLocaleLowerCase()
             if (!keyword) return tracks || []
-            return asRaw((tracks || []).filter((track) => trackSearchKey(track).includes(keyword)))
+            if (!Array.isArray(tracks)) return []
+            const previous = trackFilterStateByList.get(tracks)
+            if (previous?.keyword === keyword) return previous.result
+            const source = previous && keyword.startsWith(previous.keyword)
+                ? previous.result
+                : tracks
+            const result = asRaw(source.filter((track) => trackSearchKey(track).includes(keyword)))
+            trackFilterStateByList.set(tracks, { keyword, result })
+            return result
         },
         sortTracksByModified(tracks) {
             if (!Array.isArray(tracks) || tracks.length < 2) return tracks || []
