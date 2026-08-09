@@ -5,7 +5,6 @@ use lofty::{
 };
 use rayon::prelude::*;
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
@@ -19,6 +18,9 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 
+use crate::library_model::{CommonMetadata, FormatMetadata, Node};
+pub use crate::library_model::{ScanResponse, ScanResult};
+
 pub const STALE_SCAN: &str = "stale music scan";
 const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "wav", "aac", "m4a", "ogg", "opus", "wma", "ape", "alac", "aiff", "mp2", "mpc",
@@ -31,97 +33,6 @@ const MAX_VISITED_ENTRIES: usize = 1_000_000;
 const MAX_METADATA_CHARS: usize = 4096;
 const MAX_ARTISTS: usize = 32;
 const MAX_GENRES: usize = 32;
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ScanResult {
-    dir_tree: Vec<Node>,
-    loca_files_metadata: Vec<Node>,
-    count: usize,
-    truncated: bool,
-    complete: bool,
-    revision: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnchangedScanResult {
-    unchanged: bool,
-    count: usize,
-    truncated: bool,
-    complete: bool,
-    revision: String,
-}
-
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum ScanResponse {
-    Full(ScanResult),
-    Unchanged(UnchangedScanResult),
-}
-
-impl ScanResult {
-    pub fn matches_revision(&self, known_revision: Option<&str>) -> bool {
-        self.complete && known_revision == Some(self.revision.as_str())
-    }
-
-    pub fn into_response(self, known_revision: Option<&str>) -> ScanResponse {
-        if self.matches_revision(known_revision) {
-            ScanResponse::Unchanged(UnchangedScanResult {
-                unchanged: true,
-                count: self.count,
-                truncated: self.truncated,
-                complete: self.complete,
-                revision: self.revision,
-            })
-        } else {
-            ScanResponse::Full(self)
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Node {
-    name: String,
-    dir_path: String,
-    #[serde(rename = "type")]
-    node_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    children: Option<Vec<Node>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    common: Option<CommonMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<FormatMetadata>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CommonMetadata {
-    local_title: String,
-    file_url: String,
-    title: String,
-    artists: Vec<String>,
-    album: String,
-    albumartist: Option<String>,
-    date: Option<String>,
-    genre: Vec<String>,
-    year: Option<u32>,
-    has_lyrics: bool,
-    modified_at: Option<u64>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FormatMetadata {
-    bitrate: Option<u32>,
-    bits_per_sample: Option<u8>,
-    container: String,
-    duration: f64,
-    sample_rate: Option<u32>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Fingerprint {

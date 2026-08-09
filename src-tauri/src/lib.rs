@@ -2,6 +2,7 @@ mod audio;
 mod collections;
 mod file_replace;
 mod library;
+mod library_model;
 mod library_snapshot;
 mod media;
 mod storage;
