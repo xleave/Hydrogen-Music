@@ -1,8 +1,11 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
 use lofty::{file::TaggedFileExt, read_from_path};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 const MAX_COVER_BYTES: usize = 16 * 1024 * 1024;
@@ -11,13 +14,17 @@ const MAX_COVER_PIXELS: u64 = 32 * 1024 * 1024;
 
 struct EmbeddedCover {
     data: Vec<u8>,
-    mime: &'static str,
     extension: &'static str,
 }
 
 #[derive(Default)]
 pub struct TrackAssets {
     pub media_cover_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Default)]
+pub struct CoverCache {
+    next_generation: Arc<AtomicU64>,
 }
 
 fn cover_format(data: &[u8]) -> Option<(&'static str, &'static str)> {
@@ -123,30 +130,21 @@ fn read_embedded_cover(file_path: &Path) -> Result<Option<EmbeddedCover>, String
         return Ok(None);
     };
     validate_cover(picture.data())?;
-    let (mime, extension) = cover_format(picture.data()).expect("validated cover format");
+    let (_, extension) = cover_format(picture.data()).expect("validated cover format");
     Ok(Some(EmbeddedCover {
         data: picture.data().to_vec(),
-        mime,
         extension,
     }))
 }
 
-fn data_url(cover: &EmbeddedCover) -> String {
-    format!(
-        "data:{};base64,{}",
-        cover.mime,
-        STANDARD.encode(&cover.data)
-    )
-}
-
-fn materialize_media_cover(
+fn materialize_cover(
     cache_directory: &Path,
-    generation: u64,
+    cache_key: &str,
     cover: &EmbeddedCover,
 ) -> Result<PathBuf, String> {
     let directory = cache_directory.join("mpris-artwork");
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let target = directory.join(format!("metadata-{generation}.{}", cover.extension));
+    let target = directory.join(format!("{cache_key}.{}", cover.extension));
     fs::write(&target, &cover.data).map_err(|error| error.to_string())?;
 
     let mut cached = fs::read_dir(&directory)
@@ -169,8 +167,18 @@ fn materialize_media_cover(
     Ok(target)
 }
 
-pub fn read_cover_data_url(file_path: &Path) -> Result<Option<String>, String> {
-    Ok(read_embedded_cover(file_path)?.as_ref().map(data_url))
+impl CoverCache {
+    pub fn read(
+        &self,
+        cache_directory: &Path,
+        file_path: &Path,
+    ) -> Result<Option<PathBuf>, String> {
+        let Some(cover) = read_embedded_cover(file_path)? else {
+            return Ok(None);
+        };
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        materialize_cover(cache_directory, &format!("detail-{generation}"), &cover).map(Some)
+    }
 }
 
 pub fn read_for_media(
@@ -181,7 +189,8 @@ pub fn read_for_media(
     let Some(cover) = read_embedded_cover(file_path)? else {
         return Ok(TrackAssets::default());
     };
-    let media_cover_path = materialize_media_cover(cache_directory, generation, &cover)?;
+    let media_cover_path =
+        materialize_cover(cache_directory, &format!("metadata-{generation}"), &cover)?;
     Ok(TrackAssets {
         media_cover_path: Some(media_cover_path),
     })

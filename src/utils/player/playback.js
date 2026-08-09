@@ -16,8 +16,10 @@ const {
   volume,
 } = playerRefs
 const PROGRESS_POLL_INTERVAL_MS = 200
+const BACKGROUND_PROGRESS_RENDER_INTERVAL_MS = 1_000
 let progressTimer = null
 let statusPending = false
+let lastProgressRenderAt = 0
 let sequentialPlaybackEnded = false
 let nextTrackHandler = null
 let playbackCheckpointHandler = null
@@ -28,6 +30,11 @@ function reportAudioError(source, error) {
   const detail = error instanceof Error ? error.message : String(error)
   console.error(`[${source}]`, error)
   windowApi.reportFrontendError(source, detail).catch((reportError) => console.error('[audio error reporter]', reportError))
+}
+
+function syncSystemPlayback(status) {
+  return windowApi.setSystemMediaPlayback(status.playing, status.position)
+    .catch((error) => reportAudioError('media.playback', error))
 }
 
 function checkpointPlayback() {
@@ -67,7 +74,7 @@ class NativeMusic {
     windowApi.audioSeek(target).then((status) => {
       this.applyStatus(status)
       if (this === currentMusic.value) progress.value = status.position
-      windowApi.playOrPauseMusicCheck(status.playing)
+      syncSystemPlayback(status)
       checkpointPlayback()
     }).catch((error) => {
       reportAudioError('audio.seek', error)
@@ -100,9 +107,19 @@ export function registerNextTrackHandler(handler) { nextTrackHandler = handler }
 export function registerPlaybackCheckpointHandler(handler) { playbackCheckpointHandler = handler }
 function currentTrack() { return songList.value?.[currentIndex.value] ?? null }
 
+function shouldRenderProgress() {
+  const now = performance.now()
+  if (document.hasFocus() || now - lastProgressRenderAt >= BACKGROUND_PROGRESS_RENDER_INTERVAL_MS) {
+    lastProgressRenderAt = now
+    return true
+  }
+  return false
+}
+
 export function stopProgress() {
   if (progressTimer !== null) clearInterval(progressTimer)
   progressTimer = null
+  lastProgressRenderAt = 0
 }
 
 function updateProgress() {
@@ -112,7 +129,8 @@ function updateProgress() {
   statusPending = true
   music.sync().then((status) => {
     if (music !== currentMusic.value) return
-    progress.value = Math.min(status.position, status.duration)
+    const position = Math.min(status.position, status.duration)
+    if (status.ended || shouldRenderProgress()) progress.value = position
     time.value = Math.floor(status.duration)
     if (status.ended && !music.endHandled) {
       music.endHandled = true
@@ -138,7 +156,7 @@ function handleTrackEnd() {
   if (playMode.value === 0 && currentIndex.value >= songList.value.length - 1) {
     playing.value = false
     sequentialPlaybackEnded = true
-    windowApi.playOrPauseMusicCheck(false)
+    syncSystemPlayback({ playing: false, position: progress.value })
     checkpointPlayback()
     return
   }
@@ -161,7 +179,7 @@ export async function play(filePath, autoplay, requestId = trackRequestId) {
   updateMediaSession(requestId).catch((error) => reportAudioError('media.metadata', error))
   playing.value = status.playing
   playPending = false
-  windowApi.playOrPauseMusicCheck(status.playing)
+  syncSystemPlayback(status)
   if (status.playing) startProgress()
   return music
 }
@@ -244,7 +262,7 @@ export function startMusic() {
       if (music !== currentMusic.value) return
       playPending = false
       playing.value = status.playing
-      windowApi.playOrPauseMusicCheck(status.playing)
+      syncSystemPlayback(status)
       if (status.playing) startProgress()
       checkpointPlayback()
     }).catch((error) => {
@@ -266,16 +284,20 @@ export function pauseMusic() {
 
   invalidateTrackRequest()
   playing.value = false
-  windowApi.playOrPauseMusicCheck(false)
 
   if (currentMusic.value) {
     currentMusic.value.pause()
-      .then(() => checkpointPlayback())
+      .then((status) => {
+        syncSystemPlayback(status)
+        checkpointPlayback()
+      })
       .catch((error) => {
         if (!hadPendingLoad || !String(error).includes('no audio is loaded')) reportAudioError('audio.pause', error)
       })
   } else {
-    windowApi.audioStop().catch((error) => reportAudioError('audio.stop', error))
+    windowApi.audioStop()
+      .then(() => windowApi.setSystemMediaStopped())
+      .catch((error) => reportAudioError('audio.stop', error))
   }
 }
 

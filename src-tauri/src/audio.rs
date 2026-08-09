@@ -126,6 +126,12 @@ impl AudioState {
         output.player.stop();
         output.player.set_volume(volume.clamp(0.0, 1.0));
         output.player.append(decoder);
+        // Rodio resets its shared position from the audio thread. Without a
+        // synchronous zero seek, the first status after replacing a source can
+        // still report the previous track's position for a few milliseconds.
+        // The source is already at zero, so a format-specific seek error does
+        // not prevent playback; the Player still updates its position snapshot.
+        let _ = output.player.try_seek(Duration::ZERO);
         output.duration = duration;
         output.loaded = true;
         if autoplay {
@@ -175,10 +181,6 @@ impl AudioState {
             return Err(DEVICE_FAULT.to_string());
         }
         self.with_output(|output| Ok(output.status()))
-    }
-
-    pub fn status_position(&self) -> Result<f64, String> {
-        self.status().map(|status| status.position)
     }
 
     pub fn position(&self) -> f64 {

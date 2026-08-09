@@ -1,5 +1,6 @@
 import { markRaw } from 'vue'
 import { defineStore } from "pinia";
+import { convertFileSrc } from '@tauri-apps/api/core'
 
 function asRaw(value) {
     return value == null ? value : markRaw(value)
@@ -200,8 +201,9 @@ export const useLocalStore = defineStore('localStore', {
             }
             return false
         },
-        async getImgBase64(fileUrl) {
-            return await windowApi.getLocalMusicImage(fileUrl)
+        async getCoverUrl(fileUrl) {
+            const path = await windowApi.getLocalMusicImage(fileUrl)
+            return path ? convertFileSrc(path) : null
         },
         clearSelectedDetail() {
             this.currentSelectedFile = {name: null}
@@ -235,7 +237,7 @@ export const useLocalStore = defineStore('localStore', {
                 }
                 this.currentSelectedSongs = this.resolveTrackIds(album.trackIds)
                 if(this.currentSelectedSongs?.length)
-                    this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
+                    this.getCoverUrl(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
                     }).catch((error) => console.error('[local cover]', error))
             }
@@ -254,7 +256,7 @@ export const useLocalStore = defineStore('localStore', {
                 }
                 this.currentSelectedSongs = this.resolveTrackIds(artist.trackIds)
                 if(this.currentSelectedSongs?.length)
-                    this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
+                    this.getCoverUrl(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
                     }).catch((error) => console.error('[local cover]', error))
             }

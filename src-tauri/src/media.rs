@@ -75,7 +75,7 @@ impl MediaState {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod platform {
     use serde::Serialize;
     use souvlaki::{
@@ -95,10 +95,17 @@ mod platform {
 
     impl PlatformMediaState {
         pub fn new(app: &AppHandle) -> Self {
+            #[cfg(target_os = "windows")]
+            let hwnd = app
+                .get_webview_window("main")
+                .and_then(|window| window.hwnd().ok())
+                .map(|handle| handle.0 as *mut std::ffi::c_void);
+            #[cfg(not(target_os = "windows"))]
+            let hwnd = None;
             let config = PlatformConfig {
                 dbus_name: "hydrogen_music",
                 display_name: "Hydrogen Music",
-                hwnd: None,
+                hwnd,
             };
             let controls = (|| -> Result<MediaControls, String> {
                 let mut controls = MediaControls::new(config).map_err(|error| error.to_string())?;
@@ -115,7 +122,7 @@ mod platform {
             match controls {
                 Ok(controls) => Self(Mutex::new(Some(controls))),
                 Err(error) => {
-                    eprintln!("[mpris] disabled: {error}");
+                    eprintln!("[system media] disabled: {error}");
                     Self(Mutex::new(None))
                 }
             }
@@ -194,12 +201,18 @@ mod platform {
             })
         }
 
+        #[cfg(target_os = "linux")]
         pub fn set_volume(&self, volume: f64) -> Result<(), String> {
             self.with_controls(|controls| {
                 controls
                     .set_volume(volume.clamp(0.0, 1.0))
                     .map_err(|error| error.to_string())
             })
+        }
+
+        #[cfg(target_os = "windows")]
+        pub fn set_volume(&self, _volume: f64) -> Result<(), String> {
+            Ok(())
         }
     }
 
@@ -244,7 +257,7 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod platform {
     use tauri::AppHandle;
 

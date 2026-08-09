@@ -2,13 +2,17 @@ mod audio;
 mod collections;
 mod file_replace;
 mod library;
+mod library_index;
+mod library_model;
 mod library_snapshot;
 mod media;
+mod player_commands;
 mod storage;
+mod system_fonts;
 mod track_assets;
 
 use lofty::{file::TaggedFileExt, read_from_path, tag::ItemKey};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -38,13 +42,13 @@ const MAX_CRASH_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
 const MAX_PLAYLIST_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PLAYLIST_TRACKS: usize = 100_000;
-const MAX_TEXT_CHARS: usize = 4096;
+pub(crate) const MAX_TEXT_CHARS: usize = 4096;
 const MAX_PATH_CHARS: usize = 16_384;
-const MAX_AUDIO_SECONDS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
+pub(crate) const MAX_AUDIO_SECONDS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
 const EXIT_FALLBACK_DELAY: Duration = Duration::from_millis(1500);
 const PROJECT_URL: &str = "https://github.com/xleave/Hydrogen-Music";
 
-struct SettingsState(RwLock<Value>);
+pub(crate) struct SettingsState(RwLock<Value>);
 struct ScanState(Arc<AtomicU64>);
 
 #[derive(Clone, Default)]
@@ -71,7 +75,7 @@ struct ShortcutBinding {
     shortcut: String,
 }
 
-fn bounded_text(value: &str, max_chars: usize) -> String {
+pub(crate) fn bounded_text(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
 }
 
@@ -100,7 +104,7 @@ fn available_music_folders_from_value(settings: &Value) -> Vec<PathBuf> {
         .collect()
 }
 
-fn configured_music_folders(settings: &SettingsState) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn configured_music_folders(settings: &SettingsState) -> Result<Vec<PathBuf>, String> {
     let settings = settings.0.read().map_err(|error| error.to_string())?;
     Ok(available_music_folders_from_value(&settings))
 }
@@ -122,7 +126,7 @@ fn replace_local_folders(settings: &mut Value, folders: &[PathBuf]) -> Result<()
     Ok(())
 }
 
-fn authorized_file_path_from_folders(
+pub(crate) fn authorized_file_path_from_folders(
     folders: &[PathBuf],
     file_path: &str,
 ) -> Result<PathBuf, String> {
@@ -134,22 +138,6 @@ fn authorized_file_path_from_folders(
         return Err("file is outside the configured music folders".to_string());
     }
     Ok(file_path)
-}
-
-fn finite(value: f64, name: &str) -> Result<f64, String> {
-    if value.is_finite() {
-        Ok(value)
-    } else {
-        Err(format!("{name} must be finite"))
-    }
-}
-
-fn finite_f32(value: f32, name: &str) -> Result<f32, String> {
-    if value.is_finite() {
-        Ok(value)
-    } else {
-        Err(format!("{name} must be finite"))
-    }
 }
 
 fn json_number(value: Option<&Value>, default: f64, min: f64, max: f64) -> f64 {
@@ -439,20 +427,36 @@ async fn scan_local_music(
     .map_err(|error| error.to_string())?
 }
 
-fn read_cover_blocking(folders: Vec<PathBuf>, file_path: String) -> Result<Option<String>, String> {
+fn read_cover_blocking(
+    folders: Vec<PathBuf>,
+    cache_directory: PathBuf,
+    cache: track_assets::CoverCache,
+    file_path: String,
+) -> Result<Option<String>, String> {
     let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
-    track_assets::read_cover_data_url(&file_path)
+    cache
+        .read(&cache_directory, &file_path)
+        .map(|path| path.map(|path| path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
 async fn read_cover(
+    app: AppHandle,
     settings: State<'_, SettingsState>,
+    cache: State<'_, track_assets::CoverCache>,
     file_path: String,
 ) -> Result<Option<String>, String> {
     let folders = configured_music_folders(&settings)?;
-    tauri::async_runtime::spawn_blocking(move || read_cover_blocking(folders, file_path))
-        .await
-        .map_err(|error| error.to_string())?
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    let cache = cache.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_cover_blocking(folders, cache_directory, cache, file_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn read_lyrics_blocking(
@@ -498,221 +502,6 @@ async fn read_lyrics(
 ) -> Result<Option<String>, String> {
     let folders = configured_music_folders(&settings)?;
     tauri::async_runtime::spawn_blocking(move || read_lyrics_blocking(folders, file_path))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn audio_load(
-    settings: State<'_, SettingsState>,
-    audio: State<'_, audio::AudioState>,
-    file_path: String,
-    autoplay: bool,
-    volume: f32,
-) -> Result<audio::AudioStatus, String> {
-    let volume = finite_f32(volume, "volume")?.clamp(0.0, 1.0);
-    let folders = configured_music_folders(&settings)?;
-    let audio = audio.inner().clone();
-    // Reserve on the command thread before entering the blocking pool. Task
-    // scheduling order can no longer make an older decode supersede a newer one.
-    let generation = audio.reserve_load();
-    tauri::async_runtime::spawn_blocking(move || {
-        let path = authorized_file_path_from_folders(&folders, &file_path)?;
-        audio.load_reserved(&path, autoplay, volume, generation)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-async fn run_audio_blocking<T, F>(audio: audio::AudioState, operation: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce(&audio::AudioState) -> Result<T, String> + Send + 'static,
-{
-    tauri::async_runtime::spawn_blocking(move || operation(&audio))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn audio_play(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    run_audio_blocking(audio.inner().clone(), |audio| audio.play()).await
-}
-
-#[tauri::command]
-async fn audio_pause(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    run_audio_blocking(audio.inner().clone(), |audio| audio.pause()).await
-}
-
-#[tauri::command]
-async fn audio_seek(
-    audio: State<'_, audio::AudioState>,
-    position: f64,
-) -> Result<audio::AudioStatus, String> {
-    let position = finite(position, "position")?.clamp(0.0, MAX_AUDIO_SECONDS);
-    run_audio_blocking(audio.inner().clone(), move |audio| audio.seek(position)).await
-}
-
-#[tauri::command]
-async fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<(), String> {
-    let volume = finite_f32(volume, "volume")?.clamp(0.0, 1.0);
-    run_audio_blocking(audio.inner().clone(), move |audio| audio.set_volume(volume)).await
-}
-
-#[tauri::command]
-async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    run_audio_blocking(audio.inner().clone(), |audio| audio.status()).await
-}
-
-#[tauri::command]
-async fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
-    run_audio_blocking(audio.inner().clone(), |audio| audio.stop()).await
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct MediaMetadataResult {
-    applied: bool,
-    cover_path: Option<String>,
-}
-
-#[tauri::command]
-async fn media_set_metadata(
-    app: AppHandle,
-    media: State<'_, media::MediaState>,
-    title: String,
-    artist: String,
-    album: String,
-    duration: f64,
-    file_path: Option<String>,
-) -> Result<MediaMetadataResult, String> {
-    let generation = media.reserve_metadata()?;
-    let duration = finite(duration, "duration")?.clamp(0.0, MAX_AUDIO_SECONDS);
-    let title = bounded_text(&title, MAX_TEXT_CHARS);
-    let artist = bounded_text(&artist, MAX_TEXT_CHARS);
-    let album = bounded_text(&album, MAX_TEXT_CHARS);
-    let assets = if let Some(file_path) = file_path {
-        let settings = app.state::<SettingsState>();
-        let folders = configured_music_folders(settings.inner())?;
-        let cache_directory = app
-            .path()
-            .app_cache_dir()
-            .map_err(|error| error.to_string())?;
-        tauri::async_runtime::spawn_blocking(
-            move || -> Result<track_assets::TrackAssets, String> {
-                let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
-                Ok(
-                    match track_assets::read_for_media(&cache_directory, &file_path, generation) {
-                        Ok(assets) => assets,
-                        Err(error) => {
-                            eprintln!("[media artwork] ignored: {error}");
-                            track_assets::TrackAssets::default()
-                        }
-                    },
-                )
-            },
-        )
-        .await
-        .map_err(|error| error.to_string())??
-    } else {
-        track_assets::TrackAssets::default()
-    };
-    let cover_url = assets
-        .media_cover_path
-        .as_ref()
-        .map(|path| {
-            tauri::Url::from_file_path(path)
-                .map(|url| url.to_string())
-                .map_err(|_| "failed to create MPRIS artwork file URL".to_string())
-        })
-        .transpose()?;
-    let applied = media.set_metadata_if_current(
-        generation,
-        &title,
-        &artist,
-        &album,
-        duration,
-        cover_url.as_deref(),
-    )?;
-    Ok(MediaMetadataResult {
-        applied,
-        cover_path: if applied {
-            assets
-                .media_cover_path
-                .map(|path| path.to_string_lossy().into_owned())
-        } else {
-            None
-        },
-    })
-}
-
-#[tauri::command]
-async fn media_set_playback(
-    audio: State<'_, audio::AudioState>,
-    media: State<'_, media::MediaState>,
-    playing: bool,
-) -> Result<(), String> {
-    match run_audio_blocking(audio.inner().clone(), |audio| audio.status_position()).await {
-        Ok(position) => media.set_playback(playing, position),
-        Err(_) => media.set_stopped(),
-    }
-}
-
-#[tauri::command]
-fn media_set_stopped(media: State<'_, media::MediaState>) -> Result<(), String> {
-    media.set_stopped()
-}
-
-#[tauri::command]
-fn media_clear(media: State<'_, media::MediaState>) -> Result<(), String> {
-    media.clear()
-}
-
-#[tauri::command]
-fn media_set_volume(media: State<'_, media::MediaState>, volume: f64) -> Result<(), String> {
-    media.set_volume(finite(volume, "volume")?.clamp(0.0, 1.0))
-}
-
-fn list_system_fonts_blocking() -> Result<Vec<String>, String> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::collections::BTreeSet;
-        use std::process::Command;
-
-        let program = if std::path::Path::new("/usr/bin/fc-list").is_file() {
-            "/usr/bin/fc-list"
-        } else {
-            "fc-list"
-        };
-        let output = Command::new(program)
-            .arg("--format=%{family}\n")
-            .output()
-            .map_err(|error| format!("failed to execute fc-list: {error}"))?;
-        if !output.status.success() {
-            return Err("fc-list returned a non-zero status".to_string());
-        }
-
-        let mut families = BTreeSet::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            for family in line.split(',') {
-                let family = family.trim();
-                if !family.is_empty() {
-                    families.insert(bounded_text(family, 256));
-                }
-            }
-        }
-        Ok(families.into_iter().collect())
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(Vec::new())
-    }
-}
-
-#[tauri::command]
-async fn list_system_fonts() -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(list_system_fonts_blocking)
         .await
         .map_err(|error| error.to_string())?
 }
@@ -1047,9 +836,10 @@ pub fn run() {
             let collections = collections::load(app.handle()).map_err(std::io::Error::other)?;
             app.manage(collections::CollectionsState(RwLock::new(collections)));
 
-            // MPRIS is an optional Linux desktop integration. D-Bus failure must
-            // never make the native audio player itself fail to start.
+            // System media integration is optional. D-Bus/SMTC initialization
+            // failure must never make the native audio player itself fail.
             app.manage(media::MediaState::new(app.handle()));
+            app.manage(track_assets::CoverCache::default());
 
             let log_directory = app.path().app_log_dir()?;
             std::fs::create_dir_all(&log_directory)?;
@@ -1115,19 +905,19 @@ pub fn run() {
             scan_local_music,
             read_cover,
             read_lyrics,
-            audio_load,
-            audio_play,
-            audio_pause,
-            audio_seek,
-            audio_set_volume,
-            audio_status,
-            audio_stop,
-            media_set_metadata,
-            media_set_playback,
-            media_set_stopped,
-            media_clear,
-            media_set_volume,
-            list_system_fonts,
+            player_commands::audio_load,
+            player_commands::audio_play,
+            player_commands::audio_pause,
+            player_commands::audio_seek,
+            player_commands::audio_set_volume,
+            player_commands::audio_status,
+            player_commands::audio_stop,
+            player_commands::media_set_metadata,
+            player_commands::media_set_playback,
+            player_commands::media_set_stopped,
+            player_commands::media_clear,
+            player_commands::media_set_volume,
+            system_fonts::list_system_fonts,
             open_project_page,
             reveal_music_file,
             get_settings,
