@@ -56,9 +56,10 @@ export const useCollectionStore = defineStore('collectionStore', {
           try {
             while (savedRevision < editRevision) {
               const revision = editRevision
-              const saved = await windowApi.saveCollections(JSON.stringify(pendingSnapshot))
-              this.applyCollections(saved)
+              const snapshot = pendingSnapshot
+              const saved = await windowApi.saveCollections(JSON.stringify(snapshot))
               savedRevision = revision
+              if (revision === editRevision) this.applyCollections(saved)
             }
             this.saveState = 'saved'
           } catch (error) {
