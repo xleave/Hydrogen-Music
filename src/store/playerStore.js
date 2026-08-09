@@ -46,10 +46,7 @@ export const usePlayerStore = defineStore('playerStore', {
             isLyricDelay: true, //调整进度的时候禁止赋予delay属性
             localBase64Img: null, //如果是本地歌曲，获取封面
             forbidLastRouter: false, //在主动跳转router时禁用回到上次离开的路由的地址功能
-            coverBlur: false,
             lyricBlur: false,
-            coverUrl: null,
-            coverBackdropUrl: null,
         }
     },
     getters: {
@@ -77,6 +74,6 @@ export const usePlayerStore = defineStore('playerStore', {
         storage: localStorage,
         // 播放队列、歌曲、进度、音量和播放模式统一由 last-playlist.json 持久化，
         // 避免与 localStorage 形成两套 source of truth，并避免高频 progress 同步写入。
-        paths: ['lyricPreferences','coverBlur','lyricBlur']
+        paths: ['lyricPreferences','lyricBlur']
     },
 })

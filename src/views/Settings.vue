@@ -245,18 +245,6 @@ function setDefaultShortcuts() {
   ]
 }
 
-function setCoverBlur() {
-  if (!playerStore.coverBlur) {
-    dialogOpen('确定开启', '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？', openCoverBlur)
-  } else {
-    openCoverBlur(true)
-  }
-}
-
-function openCoverBlur(flag) {
-  if (flag) playerStore.coverBlur = !playerStore.coverBlur
-}
-
 function setLyricBlur() {
   if (!playerStore.lyricBlur) {
     dialogOpen('确定开启', '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？', openLyricBlur)
@@ -291,12 +279,6 @@ function toGithub() {
           <h2 class="item-title">音乐</h2>
           <div class="line"></div>
           <div class="item-options">
-            <div class="option">
-              <div class="option-name">开启背景封面模糊</div>
-              <div class="option-operation">
-                <SettingToggle :active="playerStore.coverBlur" :label="playerStore.coverBlur ? '已开启' : '已关闭'" @toggle="setCoverBlur" />
-              </div>
-            </div>
             <div class="option">
               <div class="option-name">开启歌词模糊</div>
               <div class="option-operation">
