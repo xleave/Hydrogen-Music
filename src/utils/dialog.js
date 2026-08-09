@@ -1,17 +1,25 @@
 import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
+import { DialogQueue } from './dialogQueue.mjs'
 const otherStore =  useOtherStore()
 const { dialogShow, dialogHeader, dialogText, noticeShow, noticeText, noticeOutAnimation } = storeToRefs(otherStore)
 
-let currentCallback = null
+const dialogQueue = new DialogQueue({
+    show: (header, text) => {
+        dialogSetter(header, text)
+        dialogShow.value = true
+    },
+    hide: () => {
+        dialogShow.value = false
+        dialogClear()
+    },
+})
 
 export function dialogOpen(header, text, callback) {
-    dialogShow.value = true
-    currentCallback = callback
-    dialogSetter(header, text)
+    dialogQueue.open(header, text, callback)
 }
 export function dialogClose() {
-    dialogShow.value = false
+    dialogQueue.close()
 }
 export function dialogSetter(header, text) {
     dialogHeader.value = header
@@ -22,12 +30,10 @@ export function dialogClear() {
     dialogText.value = null
 }
 export function dialogCancel() {
-    currentCallback(false)
-    dialogClose()
+    dialogQueue.resolve(false)
 }
 export function dialogConfirm() {
-    currentCallback(true)
-    dialogClose()
+    dialogQueue.resolve(true)
 }
 
 let noticeTimer1 = null
