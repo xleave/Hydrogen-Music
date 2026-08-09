@@ -545,8 +545,11 @@ fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<
 }
 
 #[tauri::command]
-fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    audio.status()
+async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    let audio = audio.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || audio.status())
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
