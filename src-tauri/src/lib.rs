@@ -957,7 +957,16 @@ async fn quit_app(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Single-instance must be the first plugin so a second process exits
+    // before it can claim the desktop media service name.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        show_window(app);
+    }));
+
+    let builder = builder
         .manage(audio::AudioState::default())
         .manage(ScanState(Arc::new(AtomicU64::new(0))))
         .manage(PersistenceState::default())
