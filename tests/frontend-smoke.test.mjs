@@ -91,13 +91,13 @@ test('application version stays consistent across frontend, Rust, Tauri and UI',
   const cargo = source('src-tauri/Cargo.toml')
   const cargoLock = source('src-tauri/Cargo.lock')
   const settings = source('src/views/Settings.vue')
-  const expected = '0.8.3'
+  const expected = '0.8.4'
 
   assert.equal(packageJson.version, expected)
   assert.equal(packageLock.version, expected)
   assert.equal(packageLock.packages[''].version, expected)
   assert.equal(tauriConfig.version, expected)
-  assert.match(cargo, /^version = "0\.8\.3"$/m)
-  assert.match(cargoLock, /\[\[package\]\]\nname = "hydrogen-music"\nversion = "0\.8\.3"/)
-  assert.match(settings, /<div class="version">V0\.8\.3<\/div>/)
+  assert.match(cargo, /^version = "0\.8\.4"$/m)
+  assert.match(cargoLock, /\[\[package\]\]\nname = "hydrogen-music"\nversion = "0\.8\.4"/)
+  assert.match(settings, /<div class="version">V0\.8\.4<\/div>/)
 })
