@@ -570,7 +570,7 @@ async fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
 #[serde(rename_all = "camelCase")]
 struct MediaMetadataResult {
     applied: bool,
-    cover_data_url: Option<String>,
+    cover_path: Option<String>,
 }
 
 #[tauri::command]
@@ -633,7 +633,13 @@ async fn media_set_metadata(
     )?;
     Ok(MediaMetadataResult {
         applied,
-        cover_data_url: if applied { assets.cover_data_url } else { None },
+        cover_path: if applied {
+            assets
+                .media_cover_path
+                .map(|path| path.to_string_lossy().into_owned())
+        } else {
+            None
+        },
     })
 }
 

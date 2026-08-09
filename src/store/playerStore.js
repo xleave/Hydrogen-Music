@@ -44,7 +44,7 @@ export const usePlayerStore = defineStore('playerStore', {
             lyricShow: false, //歌词是否显示
             lyricAnimationRevision: 0,
             isLyricDelay: true, //调整进度的时候禁止赋予delay属性
-            localBase64Img: null, //如果是本地歌曲，获取封面
+            localCoverUrl: null, //当前歌曲封面缓存 URL
             forbidLastRouter: false, //在主动跳转router时禁用回到上次离开的路由的地址功能
             lyricBlur: false,
         }

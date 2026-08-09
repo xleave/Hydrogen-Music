@@ -17,7 +17,6 @@ struct EmbeddedCover {
 
 #[derive(Default)]
 pub struct TrackAssets {
-    pub cover_data_url: Option<String>,
     pub media_cover_path: Option<PathBuf>,
 }
 
@@ -184,7 +183,6 @@ pub fn read_for_media(
     };
     let media_cover_path = materialize_media_cover(cache_directory, generation, &cover)?;
     Ok(TrackAssets {
-        cover_data_url: Some(data_url(&cover)),
         media_cover_path: Some(media_cover_path),
     })
 }
