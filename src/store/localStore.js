@@ -15,6 +15,7 @@ let albumById = new Map()
 let artistById = new Map()
 let trackById = new Map()
 let trackSearchKeyByObject = new WeakMap()
+let trackModifiedOrderByList = new WeakMap()
 
 function trackSearchKey(track) {
     if (!track || typeof track !== 'object') return ''
@@ -146,6 +147,17 @@ export const useLocalStore = defineStore('localStore', {
             const keyword = String(query || '').trim().toLocaleLowerCase()
             if (!keyword) return tracks || []
             return asRaw((tracks || []).filter((track) => trackSearchKey(track).includes(keyword)))
+        },
+        sortTracksByModified(tracks) {
+            if (!Array.isArray(tracks) || tracks.length < 2) return tracks || []
+            let sorted = trackModifiedOrderByList.get(tracks)
+            if (!sorted) {
+                sorted = asRaw([...tracks].sort(
+                    (left, right) => (right.common?.modifiedAt ?? 0) - (left.common?.modifiedAt ?? 0),
+                ))
+                trackModifiedOrderByList.set(tracks, sorted)
+            }
+            return sorted
         },
         getFolderSongs(arr, folderId) {
             const item = folderById.get(folderId)

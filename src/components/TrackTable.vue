@@ -27,16 +27,11 @@ const { songId, playMode } = storeToRefs(playerStore)
 const searchQuery = ref('')
 const sortMode = ref('default')
 
-const filteredData = computed(() => {
-  return localStore.filterTracks(props.songs, searchQuery.value)
-})
-
 const sortedData = computed(() => {
-  const list = filteredData.value
-  if (sortMode.value === 'modified_desc') {
-    return [...list].sort((a, b) => (b.common?.modifiedAt ?? 0) - (a.common?.modifiedAt ?? 0))
-  }
-  return list
+  const ordered = sortMode.value === 'modified_desc'
+    ? localStore.sortTracksByModified(props.songs)
+    : props.songs
+  return localStore.filterTracks(ordered, searchQuery.value)
 })
 
 function formatTrack(item) {
