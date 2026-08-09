@@ -13,6 +13,7 @@ let folderSongsByRange = new WeakMap()
 let flattenedSongs = []
 let albumById = new Map()
 let artistById = new Map()
+let trackById = new Map()
 
 function addFolderAlias(map, key, value) {
     if (key != null && key !== '' && !map.has(key)) map.set(key, value)
@@ -46,8 +47,12 @@ function rebuildLibraryIndexes(filesMetadata, classifyData) {
     flattenedSongs = []
     albumById = new Map()
     artistById = new Map()
+    trackById = new Map()
 
     indexFolderTree(filesMetadata)
+    for (const song of flattenedSongs) {
+        if (song?.id) trackById.set(song.id, song)
+    }
     for (const album of classifyData?.albums || []) albumById.set(album.id, album)
     for (const artist of classifyData?.artists || []) artistById.set(artist.id, artist)
 }
@@ -110,6 +115,9 @@ export const useLocalStore = defineStore('localStore', {
                 else target.push(song)
             }
             return target
+        },
+        resolveTrackIds(trackIds) {
+            return asRaw((trackIds || []).map((id) => trackById.get(id)).filter(Boolean))
         },
         getFolderSongs(arr, folderId) {
             const item = folderById.get(folderId)

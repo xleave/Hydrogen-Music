@@ -70,6 +70,8 @@ onBeforeUnmount(stopDrag)
   position: relative;
   overflow: hidden;
   cursor: pointer;
+  contain: layout paint style;
+  isolation: isolate;
 }
 
 .player-progress-fill {
@@ -79,6 +81,7 @@ onBeforeUnmount(stopDrag)
   height: 100%;
   background: black;
   transform-origin: left center;
+  backface-visibility: hidden;
   pointer-events: none;
   will-change: transform;
 }

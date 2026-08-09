@@ -1,11 +1,14 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import MyMusic from '../views/MyMusic.vue'
 import LocalMusicDetail from '../components/LocalMusicDetail.vue'
+import CollectionDetail from '../components/CollectionDetail.vue'
 import Settings from '../views/Settings.vue'
 import { useLocalStore } from '../store/localStore'
+import { useLibraryStore } from '../store/libraryStore'
 import pinia from '../store/pinia'
 
 const localStore = useLocalStore(pinia)
+const libraryStore = useLibraryStore(pinia)
 
 const routes = [
   {
@@ -35,6 +38,11 @@ const routes = [
         component: LocalMusicDetail,
         beforeEnter: (to) => localStore.updateLocalMusicDetail(to.name, null, to.params.id),
       },
+      {
+        path: 'collection/:id',
+        name: 'collection',
+        component: CollectionDetail,
+      },
     ],
   },
   {
@@ -53,7 +61,12 @@ const router = createRouter({
   routes,
 })
 
-const libraryDetailRoutes = new Set(['localFiles', 'localAlbum', 'localArtist'])
+const localDetailRoutes = new Set(['localFiles', 'localAlbum', 'localArtist'])
+const libraryDetailRoutes = new Set([...localDetailRoutes, 'collection'])
+router.beforeEach((to) => {
+  if (to.name === 'collection') libraryStore.librarySection = 'collections'
+  if (localDetailRoutes.has(to.name)) libraryStore.librarySection = 'local'
+})
 router.afterEach((to, from) => {
   if (!libraryDetailRoutes.has(to.name) || to.fullPath === from.fullPath) return
   requestAnimationFrame(() => {

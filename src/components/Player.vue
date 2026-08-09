@@ -8,7 +8,7 @@
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia';
   const playerStore = usePlayerStore()
-  const { playing, progress, volume, playMode, currentIndex, songList, lyricPreferences, lyricAvailability, playlistWidgetShow, time, playerChangeSong, localBase64Img, coverBlur } = storeToRefs(playerStore)
+  const { playing, progress, volume, playMode, currentIndex, songList, lyricPreferences, lyricAvailability, playlistWidgetShow, time, playerChangeSong, localBase64Img } = storeToRefs(playerStore)
 </script>
 
 <template>
@@ -29,9 +29,9 @@
                 <span class="music-name" :class="{'music-name-in': playerChangeSong}">{{songList[currentIndex].name || songList[currentIndex].localName}}</span>
             </div>
             <div class="info-music">
-                <div class="music-author-lable" :class="{'music-author-lable-video': coverBlur}"></div>
+                <div class="music-author-lable"></div>
                 <div class="music-author">
-                    <span class="author" :style="{color: coverBlur ? 'black' : 'rgb(105, 105, 105)'}" v-for="(singer, index) in songList[currentIndex].ar">{{singer.name || ''}}{{index === songList[currentIndex].ar.length -1 ? '' : ' / '}}</span>
+                    <span class="author" v-for="(singer, index) in songList[currentIndex].ar">{{singer.name || ''}}{{index === songList[currentIndex].ar.length -1 ? '' : ' / '}}</span>
                 </div>
             </div>
         </div>
@@ -295,12 +295,6 @@
               top: 50%;
               left: 50%;
               transform: translate(-50%,-50%);
-            }
-          }
-          .music-author-lable-video{
-            border: 0.5Px solid rgb(0, 0, 0);
-            &::after{
-              background-color: rgb(0, 0, 0);
             }
           }
           .music-author{

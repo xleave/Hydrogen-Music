@@ -1,11 +1,8 @@
 import { markRaw } from 'vue'
-import { createCoverBackdrop } from '../coverBackdrop'
 import { playerRefs } from './state'
 import { loadLocalLyrics, prepareLyricsForTrackChange, resetLyricAnimation, revealLyrics } from './lyrics'
 
 const {
-  coverBackdropUrl,
-  coverUrl,
   currentIndex,
   currentMusic,
   localBase64Img,
@@ -189,22 +186,10 @@ export async function updateMediaSession(requestId = trackRequestId) {
 
   const cover = result.coverDataUrl || null
   localBase64Img.value = cover
-  coverUrl.value = cover
   if ('mediaSession' in navigator && 'MediaMetadata' in window) {
     if (cover) metadata.artwork = [{ src: cover }]
     navigator.mediaSession.metadata = new MediaMetadata(metadata)
   }
-  if (!cover) {
-    coverBackdropUrl.value = null
-    return true
-  }
-
-  createCoverBackdrop(cover).then((backdrop) => {
-    if (requestId === trackRequestId) coverBackdropUrl.value = backdrop
-  }).catch((error) => {
-    reportAudioError('cover.backdrop', error)
-    if (requestId === trackRequestId) coverBackdropUrl.value = cover
-  })
   return true
 }
 

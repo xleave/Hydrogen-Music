@@ -1,4 +1,5 @@
 mod audio;
+mod collections;
 mod file_replace;
 mod library;
 mod library_snapshot;
@@ -47,7 +48,7 @@ struct SettingsState(RwLock<Value>);
 struct ScanState(Arc<AtomicU64>);
 
 #[derive(Clone, Default)]
-struct PersistenceState(Arc<Mutex<()>>);
+pub(crate) struct PersistenceState(pub(crate) Arc<Mutex<()>>);
 
 #[derive(Clone, Default)]
 struct PlaybackSnapshotState(Arc<RwLock<Option<Value>>>);
@@ -310,7 +311,7 @@ fn sanitize_playlist(value: &Value) -> Result<Value, String> {
     }))
 }
 
-async fn write_json_async(
+pub(crate) async fn write_json_async(
     app: AppHandle,
     writer: Arc<Mutex<()>>,
     name: &'static str,
@@ -544,8 +545,11 @@ fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<
 }
 
 #[tauri::command]
-fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    audio.status()
+async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    let audio = audio.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || audio.status())
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1022,6 +1026,9 @@ pub fn run() {
                 initial_playlist,
             ))));
 
+            let collections = collections::load(app.handle()).map_err(std::io::Error::other)?;
+            app.manage(collections::CollectionsState(RwLock::new(collections)));
+
             // MPRIS is an optional Linux desktop integration. D-Bus failure must
             // never make the native audio player itself fail to start.
             app.manage(media::MediaState::new(app.handle()));
@@ -1109,6 +1116,8 @@ pub fn run() {
             set_settings,
             get_last_playlist,
             save_last_playlist,
+            collections::get_collections,
+            collections::save_collections,
             report_frontend_error,
             register_shortcuts,
             unregister_shortcuts,

@@ -1,7 +1,13 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { changeProgress } from '../utils/player'
+import {
+  calculateLyricLineHeight,
+  centeredLyricBlockOffset,
+  centeredLyricLineOffset,
+  lyricBlurRadius,
+} from '../utils/lyricLayout.mjs'
 import { usePlayerStore } from '../store/playerStore'
 
 const playerStore = usePlayerStore()
@@ -28,11 +34,16 @@ const interludeIndex = ref(null)
 const interludeAnimation = ref(false)
 const interludeRemainingTime = ref(0)
 const isLyricActive = ref(true)
+const lyricAutoTrack = ref(null)
 const lyricTrack = ref(null)
+const measuredTrackHeight = ref(0)
+const autoTrackOffset = ref(0)
 let scrollTimer = null
 let interludeTimer = null
 let wheelFrame = null
 let returnTimer = null
+let trackResizeObserver = null
+let centeringRevision = 0
 let manualScrollOffset = 0
 let pendingWheelDelta = 0
 let wheelVelocity = 0
@@ -40,22 +51,16 @@ let isReturning = false
 
 const displayedLyrics = computed(() => lyricsObjArr.value || [])
 
-const lineHeight = computed(() => {
-  const size = [
-    lyricPreferences.value.includes('original') && lyricAvailability.value.original ? Number(lyricSize.value) : 0,
-    lyricPreferences.value.includes('trans') && lyricAvailability.value.trans ? Number(tlyricSize.value) : 0,
-    lyricPreferences.value.includes('roma') && lyricAvailability.value.roma ? Number(rlyricSize.value) : 0,
-  ].reduce((sum, value) => sum + value, 0)
-  return size * 1.5 + 30
-})
+const lineHeight = computed(() => calculateLyricLineHeight({
+  original: lyricSize.value,
+  trans: tlyricSize.value,
+  roma: rlyricSize.value,
+}, lyricPreferences.value, lyricAvailability.value))
 
-const scrollAreaHeight = computed(() => displayedLyrics.value.length * lineHeight.value)
-const lineOffset = computed(() => {
-  const base = -(scrollAreaHeight.value - 260)
-  return base - (activeIndex.value + 1) * lineHeight.value
-})
+const estimatedTrackHeight = computed(() => displayedLyrics.value.length * lineHeight.value)
+const scrollAreaHeight = computed(() => measuredTrackHeight.value || estimatedTrackHeight.value)
 const autoTrackStyle = computed(() => ({
-  transform: `translate3d(0, ${lineOffset.value}px, 0)`,
+  transform: `translate3d(0, ${autoTrackOffset.value}px, 0)`,
   transition: isLyricActive.value ? '' : 'none',
 }))
 
@@ -68,6 +73,42 @@ function setTrackOffset(offset) {
   if (lyricTrack.value) {
     lyricTrack.value.style.transform = `translate3d(0, ${manualScrollOffset}px, 0)`
   }
+}
+
+function lyricLineElement(index) {
+  if (index < 0) return null
+  const line = lyricAutoTrack.value?.children[index]
+  return line instanceof HTMLElement ? line : null
+}
+
+function lyricLineCenter(index) {
+  const line = lyricLineElement(index)
+  if (!line) return null
+  const content = line.querySelector(':scope > .line')
+  const target = content instanceof HTMLElement ? content : line
+  return line.offsetTop + target.offsetTop + target.offsetHeight / 2
+}
+
+function syncCenteredOffset() {
+  const track = lyricAutoTrack.value
+  if (!track) return
+
+  measuredTrackHeight.value = track.scrollHeight
+  if (!lyricsSynchronized.value) {
+    autoTrackOffset.value = centeredLyricBlockOffset(track.scrollHeight)
+    return
+  }
+
+  const center = lyricLineCenter(Math.max(0, activeIndex.value))
+  autoTrackOffset.value = center !== null
+    ? centeredLyricLineOffset(center, 0)
+    : 0
+}
+
+async function scheduleCenteredOffset() {
+  const revision = ++centeringRevision
+  await nextTick()
+  if (revision === centeringRevision) syncCenteredOffset()
 }
 
 function currentTrackOffset(track) {
@@ -142,7 +183,12 @@ function updateActiveLine(seek) {
   if (nextIndex !== activeIndex.value) {
     const previousIndex = activeIndex.value
     if (!isLyricActive.value && !isReturning && previousIndex >= -1) {
-      setTrackOffset(manualScrollOffset + (nextIndex - previousIndex) * lineHeight.value)
+      const previousCenter = lyricLineCenter(previousIndex)
+      const nextCenter = lyricLineCenter(nextIndex)
+      const centerDelta = previousCenter !== null && nextCenter !== null
+        ? nextCenter - previousCenter
+        : (nextIndex - previousIndex) * lineHeight.value
+      setTrackOffset(manualScrollOffset + centerDelta)
     }
     activeIndex.value = nextIndex
   }
@@ -167,12 +213,14 @@ function updateActiveLine(seek) {
 }
 
 function lineStyle(index) {
-  const distance = Math.abs(index - activeIndex.value)
-  const blurred = lyricBlur.value && isLyricActive.value && distance > 0
+  const radius = lyricBlurRadius(
+    index,
+    activeIndex.value,
+    lyricBlur.value && isLyricActive.value,
+    lyricsSynchronized.value,
+  )
   return {
-    '--lyric-filter': blurred
-      ? `blur(${Math.min(distance * 0.25, 1.8)}px)`
-      : 'none',
+    '--lyric-filter': radius > 0 ? `blur(${radius}px)` : 'none',
   }
 }
 
@@ -252,6 +300,7 @@ watch(lyricsObjArr, () => {
   interludeAnimation.value = false
   interludeIndex.value = null
   resetManualScroll(true)
+  scheduleCenteredOffset()
 })
 
 watch(lyricAnimationRevision, () => {
@@ -260,13 +309,27 @@ watch(lyricAnimationRevision, () => {
 
 watch([lyricSize, tlyricSize, rlyricSize, lyricPreferences, lyricAvailability], () => {
   resetManualScroll(true)
+  scheduleCenteredOffset()
 }, { deep: true })
 
+watch([activeIndex, lyricsSynchronized], scheduleCenteredOffset, { flush: 'post' })
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') {
+    trackResizeObserver = new ResizeObserver(syncCenteredOffset)
+    if (lyricAutoTrack.value) trackResizeObserver.observe(lyricAutoTrack.value)
+  }
+  scheduleCenteredOffset()
+})
+
 onBeforeUnmount(() => {
+  centeringRevision += 1
   clearTimeout(scrollTimer)
   clearTimeout(interludeTimer)
   clearTimeout(returnTimer)
   cancelWheelFrame()
+  trackResizeObserver?.disconnect()
+  trackResizeObserver = null
 })
 </script>
 
@@ -274,9 +337,8 @@ onBeforeUnmount(() => {
   <div class="lyric-container">
     <Transition name="fade">
       <div v-show="lyricsObjArr && lyricShow && lyricPreferences.includes('original')" class="lyric-area" @wheel.prevent="handleWheel">
-        <div class="lyric-scroll-area" :style="{ height: `${scrollAreaHeight}px` }"></div>
         <div ref="lyricTrack" class="lyric-track" :class="{ 'lyric-track-manual': !isLyricActive || isReturning }">
-          <div class="lyric-auto-track" :style="autoTrackStyle">
+          <div ref="lyricAutoTrack" class="lyric-auto-track" :style="autoTrackStyle">
             <div class="lyric-line" :style="lineStyle(index)" v-for="(item, index) in displayedLyrics" :key="`${item.time}-${index}`" v-show="item.lyric">
               <div class="line" @click="changeProgressLyric(item.time, index)" :class="{'line-highlight': index === activeIndex, 'lyric-inactive': !isLyricActive || item.active}">
                 <div class="lyric-text-group">
@@ -336,12 +398,13 @@ onBeforeUnmount(() => {
       width: calc(100% - 3vh);
       height: calc(100% - 3vh);
       overflow: hidden;
+      position: relative;
       transition: 0.3s cubic-bezier(.30,0,.12,1);
-      .lyric-scroll-area{
-        width: 100%;
-        transition: 0.3s;
-      }
       .lyric-track{
+        width: 100%;
+        position: absolute;
+        top: 50%;
+        left: 0;
         transform: translate3d(0, 0, 0);
       }
       .lyric-track-manual{

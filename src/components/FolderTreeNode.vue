@@ -42,17 +42,18 @@ function showFiles() {
       'list-item-open': expanded,
       'list-item-selected': selected,
     }"
-    @click.stop="showFiles"
   >
     <div class="folder">
-      <div class="folder-img">
-        <svg class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-          <path d="M418.133333 298.666667l-42.666666-42.666667H213.333333v512h640V298.666667H418.133333zM896 298.666667v512H170.666667V213.333333h226.133333l42.666667 42.666667H896v42.666667z m-298.666667 341.333333h170.666667v42.666667h-170.666667v-42.666667z" fill="#000000" />
-        </svg>
-      </div>
-      <div class="folder-name">
-        <span class="name">{{ item.name }}</span>
-      </div>
+      <button class="folder-main" type="button" @click.stop="showFiles">
+        <span class="folder-img">
+          <svg class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+            <path d="M418.133333 298.666667l-42.666666-42.666667H213.333333v512h640V298.666667H418.133333zM896 298.666667v512H170.666667V213.333333h226.133333l42.666667 42.666667H896v42.666667z m-298.666667 341.333333h170.666667v42.666667h-170.666667v-42.666667z" fill="#000000" />
+          </svg>
+        </span>
+        <span class="folder-name">
+          <span class="name">{{ item.name }}</span>
+        </span>
+      </button>
       <div
         v-if="hasChildren"
         class="folder-more"
@@ -100,6 +101,19 @@ function showFiles() {
     display: flex;
     flex-direction: row;
     align-items: center;
+  }
+
+  .folder-main {
+    min-width: 0;
+    flex: 1;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    color: black;
+    cursor: pointer;
   }
 
   .folder-img {

@@ -4,11 +4,13 @@ import { loadLastSong } from './player/playlist'
 import { scanMusic } from './locaMusic'
 import { usePlayerStore } from '../store/playerStore'
 import { useLocalStore } from '../store/localStore'
+import { useCollectionStore } from '../store/collectionStore'
 import { storeToRefs } from 'pinia'
 import { insertCustomFontStyle } from './setFont'
 
 const playerStore = usePlayerStore(pinia)
 const localStore = useLocalStore(pinia)
+const collectionStore = useCollectionStore(pinia)
 const { lyricSize, tlyricSize, rlyricSize, lyricInterludeTime } = storeToRefs(playerStore)
 
 export const settingsSaveState = ref('saved')
@@ -126,4 +128,5 @@ export async function initSettings() {
 export function init() {
   initSettings().catch((error) => console.error('[settings.init]', error))
   loadLastSong().catch((error) => console.error('[playlist.restore]', error))
+  collectionStore.hydrate().catch((error) => console.error('[collections.restore]', error))
 }
