@@ -30,6 +30,20 @@ test('translation and romanization align within normal timestamp drift', () => {
   assert.deepEqual(parsed.availability, { original: true, trans: true, roma: true })
 })
 
+test('inline U+2009 translations use the existing secondary lyric field', () => {
+  const parsed = parseLyrics({
+    lrc: { lyric: '[00:01.43]Original line\u2009翻译行' },
+  })
+
+  assert.deepEqual(parsed.lines, [{
+    lyric: 'Original line',
+    time: 1.43,
+    tlyric: '翻译行',
+    rlyric: undefined,
+  }])
+  assert.deepEqual(parsed.availability, { original: true, trans: true, roma: false })
+})
+
 test('untimed lyrics remain untimed and ignore metadata tags', () => {
   const parsed = parseLyrics({
     lrc: { lyric: '[ar:Artist]\nFirst line\nSecond line' },
