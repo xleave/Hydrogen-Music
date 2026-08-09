@@ -270,6 +270,8 @@ export function installWindowApi() {
     openLocalFolder: (filePath) => invoke('reveal_music_file', { filePath }),
     saveLastPlaylist: (playlist) => invoke('save_last_playlist', { playlist }),
     getLastPlaylist: () => invoke('get_last_playlist'),
+    saveCollections: (collections) => invoke('save_collections', { collections }),
+    getCollections: () => invoke('get_collections'),
     reportFrontendError: (source, detail) => invoke('report_frontend_error', { source, detail }),
     copyTxt: (txt) => navigator.clipboard.writeText(txt),
     playOrPauseMusic: (callback) => subscribe('playOrPauseMusic', callback),
