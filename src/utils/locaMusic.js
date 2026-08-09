@@ -4,6 +4,7 @@ import { useLibraryStore } from '../store/libraryStore'
 import { storeToRefs } from 'pinia'
 import { noticeOpen } from './dialog'
 import { restorePlaylistFromLibrary } from './player'
+import { libraryEntityId } from './libraryEntityId.mjs'
 
 const localStore = useLocalStore(pinia)
 const libraryStore = useLibraryStore(pinia)
@@ -17,7 +18,7 @@ function classifyAdd(song) {
     artists.forEach((artist) => {
         if (!artistMap.has(artist)) {
             artistMap.set(artist, {
-                id: artist,
+                id: libraryEntityId('artist', [artist]),
                 type: 'artist',
                 name: artist,
                 trackIds: []
@@ -31,7 +32,7 @@ function classifyAdd(song) {
     const albumId = JSON.stringify([albumArtist, album])
     if (!albumMap.has(albumId)) {
         albumMap.set(albumId, {
-            id: albumId,
+            id: libraryEntityId('album', [albumArtist, album]),
             type: 'album',
             name: album,
             albumArtist,

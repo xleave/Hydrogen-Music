@@ -211,7 +211,9 @@ export const useLocalStore = defineStore('localStore', {
                 return Boolean(found)
             }
             if(type === 'localAlbum') {
-                const album = albumById.get(id) || (this.localMusicClassify?.albums || []).find((item) => item.id === id)
+                const album = albumById.get(id) || (this.localMusicClassify?.albums || []).find(
+                    (item) => item.id === id || JSON.stringify([item.albumArtist, item.name]) === id,
+                )
                 if (!album) {
                     this.clearSelectedDetail()
                     return false
@@ -229,7 +231,9 @@ export const useLocalStore = defineStore('localStore', {
                     }).catch((error) => console.error('[local cover]', error))
             }
             if(type === 'localArtist') {
-                const artist = artistById.get(id) || (this.localMusicClassify?.artists || []).find((item) => item.id === id)
+                const artist = artistById.get(id) || (this.localMusicClassify?.artists || []).find(
+                    (item) => item.id === id || item.name === id,
+                )
                 if (!artist) {
                     this.clearSelectedDetail()
                     return false
