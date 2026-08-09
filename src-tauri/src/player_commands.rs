@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
@@ -20,6 +21,18 @@ fn finite_f32(value: f32, name: &str) -> Result<f32, String> {
     } else {
         Err(format!("{name} must be finite"))
     }
+}
+
+#[cfg(target_os = "windows")]
+fn media_cover_url(path: &Path) -> Result<String, String> {
+    Ok(format!("file://{}", path.to_string_lossy()))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn media_cover_url(path: &Path) -> Result<String, String> {
+    tauri::Url::from_file_path(path)
+        .map(|url| url.to_string())
+        .map_err(|_| "failed to create system media artwork file URL".to_string())
 }
 
 #[tauri::command]
@@ -149,11 +162,7 @@ pub(crate) async fn media_set_metadata(
     let cover_url = assets
         .media_cover_path
         .as_ref()
-        .map(|path| {
-            tauri::Url::from_file_path(path)
-                .map(|url| url.to_string())
-                .map_err(|_| "failed to create MPRIS artwork file URL".to_string())
-        })
+        .map(|path| media_cover_url(path))
         .transpose()?;
     let applied = media.set_metadata_if_current(
         generation,

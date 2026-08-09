@@ -863,8 +863,8 @@ pub fn run() {
             let collections = collections::load(app.handle()).map_err(std::io::Error::other)?;
             app.manage(collections::CollectionsState(RwLock::new(collections)));
 
-            // MPRIS is an optional Linux desktop integration. D-Bus failure must
-            // never make the native audio player itself fail to start.
+            // System media integration is optional. D-Bus/SMTC initialization
+            // failure must never make the native audio player itself fail.
             app.manage(media::MediaState::new(app.handle()));
 
             let log_directory = app.path().app_log_dir()?;
