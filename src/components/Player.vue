@@ -8,7 +8,7 @@
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia';
   const playerStore = usePlayerStore()
-  const { playing, progress, volume, playMode, currentIndex, songList, lyricPreferences, lyricAvailability, playlistWidgetShow, time, playerChangeSong, localBase64Img } = storeToRefs(playerStore)
+  const { playing, progress, volume, playMode, currentIndex, songList, lyricPreferences, lyricAvailability, playlistWidgetShow, time, playerChangeSong, localCoverUrl } = storeToRefs(playerStore)
 </script>
 
 <template>
@@ -16,7 +16,7 @@
     <div class="player">
         <div class="player-cover">
             <div class="cover" :class="{'cover-change': playerChangeSong}">
-                <img v-show="localBase64Img" :src="localBase64Img" alt="">
+                <img v-show="localCoverUrl" :src="localCoverUrl" alt="">
             </div>
             <div class="c-border c-border1"></div>
             <div class="c-border c-border2"></div>

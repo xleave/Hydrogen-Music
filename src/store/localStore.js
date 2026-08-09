@@ -14,6 +14,28 @@ let flattenedSongs = []
 let albumById = new Map()
 let artistById = new Map()
 let trackById = new Map()
+let trackSearchKeyByObject = new WeakMap()
+let trackModifiedOrderByList = new WeakMap()
+let trackFilterStateByList = new WeakMap()
+
+function trackSearchKey(track) {
+    if (!track || typeof track !== 'object') return ''
+    const cached = trackSearchKeyByObject.get(track)
+    if (cached !== undefined) return cached
+    const common = track.common || {}
+    const key = [
+        common.title,
+        common.localTitle,
+        common.album,
+        common.albumartist,
+        ...(common.artists || []),
+    ]
+        .filter(Boolean)
+        .join('\n')
+        .toLocaleLowerCase()
+    trackSearchKeyByObject.set(track, key)
+    return key
+}
 
 function addFolderAlias(map, key, value) {
     if (key != null && key !== '' && !map.has(key)) map.set(key, value)
@@ -48,6 +70,7 @@ function rebuildLibraryIndexes(filesMetadata, classifyData) {
     albumById = new Map()
     artistById = new Map()
     trackById = new Map()
+    trackSearchKeyByObject = new WeakMap()
 
     indexFolderTree(filesMetadata)
     for (const song of flattenedSongs) {
@@ -74,6 +97,7 @@ export const useLocalStore = defineStore('localStore', {
             localDirectoryTree: null,
             localMusicList: null,
             localMusicClassify: null,
+            libraryRevision: null,
 
             currentSelectedFile: {name: null},
 
@@ -88,7 +112,7 @@ export const useLocalStore = defineStore('localStore', {
         }
     },
     actions: {
-        setLibraryData(dirTree, filesMetadata, classifyData) {
+        setLibraryData(dirTree, filesMetadata, classifyData, revision = null) {
             const selectedType = this.currentType
             const selectedId = this.currentSelectedInfo?.id
                 || this.currentSelectedInfo?.dirPath
@@ -101,6 +125,7 @@ export const useLocalStore = defineStore('localStore', {
             this.localDirectoryTree = rawDirTree
             this.localMusicList = rawFilesMetadata
             this.localMusicClassify = rawClassifyData
+            this.libraryRevision = revision
 
             if (selectedType && selectedId) {
                 const query = selectedType === 'localFiles'
@@ -118,6 +143,30 @@ export const useLocalStore = defineStore('localStore', {
         },
         resolveTrackIds(trackIds) {
             return asRaw((trackIds || []).map((id) => trackById.get(id)).filter(Boolean))
+        },
+        filterTracks(tracks, query) {
+            const keyword = String(query || '').trim().toLocaleLowerCase()
+            if (!keyword) return tracks || []
+            if (!Array.isArray(tracks)) return []
+            const previous = trackFilterStateByList.get(tracks)
+            if (previous?.keyword === keyword) return previous.result
+            const source = previous && keyword.startsWith(previous.keyword)
+                ? previous.result
+                : tracks
+            const result = asRaw(source.filter((track) => trackSearchKey(track).includes(keyword)))
+            trackFilterStateByList.set(tracks, { keyword, result })
+            return result
+        },
+        sortTracksByModified(tracks) {
+            if (!Array.isArray(tracks) || tracks.length < 2) return tracks || []
+            let sorted = trackModifiedOrderByList.get(tracks)
+            if (!sorted) {
+                sorted = asRaw([...tracks].sort(
+                    (left, right) => (right.common?.modifiedAt ?? 0) - (left.common?.modifiedAt ?? 0),
+                ))
+                trackModifiedOrderByList.set(tracks, sorted)
+            }
+            return sorted
         },
         getFolderSongs(arr, folderId) {
             const item = folderById.get(folderId)
@@ -171,7 +220,9 @@ export const useLocalStore = defineStore('localStore', {
                 return Boolean(found)
             }
             if(type === 'localAlbum') {
-                const album = albumById.get(id) || (this.localMusicClassify?.albums || []).find((item) => item.id === id)
+                const album = albumById.get(id) || (this.localMusicClassify?.albums || []).find(
+                    (item) => item.id === id || JSON.stringify([item.albumArtist, item.name]) === id,
+                )
                 if (!album) {
                     this.clearSelectedDetail()
                     return false
@@ -182,14 +233,16 @@ export const useLocalStore = defineStore('localStore', {
                     name: album.name,
                     albumArtist: album.albumArtist,
                 }
-                this.currentSelectedSongs = asRaw(album.songs)
+                this.currentSelectedSongs = this.resolveTrackIds(album.trackIds)
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res
                     }).catch((error) => console.error('[local cover]', error))
             }
             if(type === 'localArtist') {
-                const artist = artistById.get(id) || (this.localMusicClassify?.artists || []).find((item) => item.id === id)
+                const artist = artistById.get(id) || (this.localMusicClassify?.artists || []).find(
+                    (item) => item.id === id || item.name === id,
+                )
                 if (!artist) {
                     this.clearSelectedDetail()
                     return false
@@ -199,7 +252,7 @@ export const useLocalStore = defineStore('localStore', {
                     id: artist.id,
                     name: artist.name
                 }
-                this.currentSelectedSongs = asRaw(artist.songs)
+                this.currentSelectedSongs = this.resolveTrackIds(artist.trackIds)
                 if(this.currentSelectedSongs?.length)
                     this.getImgBase64(this.currentSelectedSongs[0].common.fileUrl).then(res => {
                         if (requestId === this.detailRequestId) this.currentSelectedFilePicUrl = res

@@ -32,6 +32,7 @@ function invalidateLocalLibrary() {
   localStore.localDirectoryTree = null
   localStore.localMusicList = null
   localStore.localMusicClassify = null
+  localStore.libraryRevision = null
   localStore.currentSelectedInfo = null
   localStore.currentSelectedSongs = null
   localStore.currentSelectedFilePicUrl = null

@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -17,7 +17,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 
 pub const STALE_SCAN: &str = "stale music scan";
 const AUDIO_EXTENSIONS: &[&str] = &[
@@ -40,6 +40,44 @@ pub struct ScanResult {
     count: usize,
     truncated: bool,
     complete: bool,
+    revision: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnchangedScanResult {
+    unchanged: bool,
+    count: usize,
+    truncated: bool,
+    complete: bool,
+    revision: String,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum ScanResponse {
+    Full(ScanResult),
+    Unchanged(UnchangedScanResult),
+}
+
+impl ScanResult {
+    pub fn matches_revision(&self, known_revision: Option<&str>) -> bool {
+        self.complete && known_revision == Some(self.revision.as_str())
+    }
+
+    pub fn into_response(self, known_revision: Option<&str>) -> ScanResponse {
+        if self.matches_revision(known_revision) {
+            ScanResponse::Unchanged(UnchangedScanResult {
+                unchanged: true,
+                count: self.count,
+                truncated: self.truncated,
+                complete: self.complete,
+                revision: self.revision,
+            })
+        } else {
+            ScanResponse::Full(self)
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -85,7 +123,7 @@ struct FormatMetadata {
     sample_rate: Option<u32>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Fingerprint {
     size: u64,
     modified_ms: u64,
@@ -96,27 +134,39 @@ struct Fingerprint {
 #[derive(Clone)]
 struct CachedTrack {
     fingerprint: Fingerprint,
+    file_key: Option<String>,
     node: Node,
 }
 
 struct ScanCache {
     entries: HashMap<String, CachedTrack>,
+    path_by_file_key: HashMap<String, String>,
     updates: Mutex<Vec<(String, CachedTrack)>>,
-    seen: Mutex<HashSet<String>>,
+    seen: Mutex<HashMap<String, Option<Fingerprint>>>,
 }
 
 impl ScanCache {
     fn new(entries: HashMap<String, CachedTrack>) -> Self {
+        let path_by_file_key = entries
+            .iter()
+            .filter_map(|(path, entry)| {
+                entry
+                    .file_key
+                    .as_ref()
+                    .map(|file_key| (file_key.clone(), path.clone()))
+            })
+            .collect();
         Self {
             entries,
+            path_by_file_key,
             updates: Mutex::new(Vec::new()),
-            seen: Mutex::new(HashSet::new()),
+            seen: Mutex::new(HashMap::new()),
         }
     }
 
-    fn remember_seen(&self, path: &str) {
+    fn remember_seen(&self, path: &str, fingerprint: Option<Fingerprint>) {
         if let Ok(mut seen) = self.seen.lock() {
-            seen.insert(path.to_owned());
+            seen.insert(path.to_owned(), fingerprint);
         }
     }
 
@@ -124,6 +174,14 @@ impl ScanCache {
         if let Ok(mut updates) = self.updates.lock() {
             updates.push((path, entry));
         }
+    }
+
+    fn moved_entry(&self, current_path: &str, file_key: Option<&str>) -> Option<&CachedTrack> {
+        let previous_path = self.path_by_file_key.get(file_key?)?;
+        if previous_path == current_path || Path::new(previous_path).exists() {
+            return None;
+        }
+        self.entries.get(previous_path)
     }
 }
 
@@ -229,6 +287,7 @@ pub fn scan(
     let count = results.iter().map(|(_, c)| c).sum();
     let metadata_roots: Vec<Node> = results.into_iter().map(|(n, _)| n).collect();
     let dir_tree = metadata_roots.iter().map(directory_only).collect();
+    let revision = library_revision(&metadata_roots, &cache);
 
     let complete = roots_complete && budget.may_prune_cache();
     if let Err(error) = persist_index(index_path, &cache, complete) {
@@ -241,6 +300,7 @@ pub fn scan(
         count,
         truncated: budget.truncated.load(Ordering::Acquire),
         complete,
+        revision,
     })
 }
 
@@ -410,6 +470,48 @@ fn stable_track_id(path: &Path) -> String {
     format!("track:{first:016x}{second:016x}")
 }
 
+fn hash_revision_field(value: &[u8], first: &mut u64, second: &mut u64) {
+    let length = (value.len() as u64).to_le_bytes();
+    *first = fnv1a(length.into_iter().chain(value.iter().copied()), *first);
+    *second = fnv1a(value.iter().rev().copied().chain(length), *second);
+}
+
+fn hash_revision_nodes(
+    nodes: &[Node],
+    seen: &HashMap<String, Option<Fingerprint>>,
+    first: &mut u64,
+    second: &mut u64,
+) {
+    for node in nodes {
+        hash_revision_field(node.node_type.as_bytes(), first, second);
+        hash_revision_field(node.dir_path.as_bytes(), first, second);
+        if let Some(Some(fingerprint)) = seen.get(&node.dir_path) {
+            for value in [
+                fingerprint.size,
+                fingerprint.modified_ms,
+                fingerprint.lrc_size,
+                fingerprint.lrc_modified_ms,
+            ] {
+                hash_revision_field(&value.to_le_bytes(), first, second);
+            }
+        }
+        if let Some(children) = node.children.as_deref() {
+            hash_revision_nodes(children, seen, first, second);
+        }
+    }
+}
+
+fn library_revision(nodes: &[Node], cache: &ScanCache) -> String {
+    let mut first = 0xcbf29ce484222325;
+    let mut second = 0x84222325cbf29ce4;
+    if let Ok(seen) = cache.seen.lock() {
+        hash_revision_nodes(nodes, &seen, &mut first, &mut second);
+    } else {
+        hash_revision_nodes(nodes, &HashMap::new(), &mut first, &mut second);
+    }
+    format!("{first:016x}{second:016x}")
+}
+
 fn modified_ms(metadata: &fs::Metadata) -> u64 {
     metadata
         .modified()
@@ -419,33 +521,88 @@ fn modified_ms(metadata: &fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-fn fingerprint(path: &Path) -> Option<Fingerprint> {
+#[cfg(unix)]
+fn native_file_key(metadata: &fs::Metadata) -> Option<String> {
+    Some(format!("{}:{}", metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn native_file_key(_metadata: &fs::Metadata) -> Option<String> {
+    None
+}
+
+fn file_state(path: &Path) -> Option<(Fingerprint, Option<String>)> {
     let metadata = fs::metadata(path).ok()?;
     let lrc = fs::metadata(path.with_extension("lrc")).ok();
-    Some(Fingerprint {
+    let fingerprint = Fingerprint {
         size: metadata.len(),
         modified_ms: modified_ms(&metadata),
         lrc_size: lrc.as_ref().map(fs::Metadata::len).unwrap_or(0),
         lrc_modified_ms: lrc.as_ref().map(modified_ms).unwrap_or(0),
-    })
+    };
+    Some((fingerprint, native_file_key(&metadata)))
+}
+
+fn relocate_cached_track(mut node: Node, path: &Path) -> Node {
+    let file_path = path.to_string_lossy().into_owned();
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let local_title = bounded_text(&path.file_stem().unwrap_or_default().to_string_lossy());
+    node.name = file_name;
+    node.dir_path = file_path.clone();
+    if let Some(common) = node.common.as_mut() {
+        if common.title == common.local_title {
+            common.title = local_title.clone();
+        }
+        common.local_title = local_title;
+        common.file_url = file_path;
+    }
+    node
 }
 
 fn read_track_cached(path: &Path, cache: &ScanCache) -> Node {
     let path_string = path.to_string_lossy().into_owned();
-    cache.remember_seen(&path_string);
+    let current = file_state(path);
+    cache.remember_seen(
+        &path_string,
+        current.as_ref().map(|(fingerprint, _)| *fingerprint),
+    );
 
-    if let Some(current) = fingerprint(path) {
+    if let Some((current, file_key)) = current {
         if let Some(cached) = cache.entries.get(&path_string) {
             if cached.fingerprint == current {
+                if cached.file_key != file_key {
+                    cache.queue_update(
+                        path_string,
+                        CachedTrack {
+                            fingerprint: current,
+                            file_key,
+                            node: cached.node.clone(),
+                        },
+                    );
+                }
                 return cached.node.clone();
             }
         }
 
-        let node = read_track(path).unwrap_or_else(|_| fallback_track(path));
+        let moved = cache.moved_entry(&path_string, file_key.as_deref());
+        let mut node = match moved {
+            Some(entry) if entry.fingerprint == current => {
+                relocate_cached_track(entry.node.clone(), path)
+            }
+            _ => read_track(path).unwrap_or_else(|_| fallback_track(path)),
+        };
+        if let Some(id) = moved.and_then(|entry| entry.node.id.clone()) {
+            node.id = Some(id);
+        }
         cache.queue_update(
             path_string,
             CachedTrack {
                 fingerprint: current,
+                file_key,
                 node: node.clone(),
             },
         );
@@ -455,7 +612,7 @@ fn read_track_cached(path: &Path, cache: &ScanCache) -> Node {
     fallback_track(path)
 }
 
-fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
+fn open_index(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -470,13 +627,34 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
                  modified_ms INTEGER NOT NULL,
                  lrc_size INTEGER NOT NULL,
                  lrc_modified_ms INTEGER NOT NULL,
+                 file_key TEXT,
                  node_json TEXT NOT NULL
              );",
         )
         .map_err(|error| error.to_string())?;
+    let has_file_key = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tracks') WHERE name = 'file_key')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !has_file_key {
+        connection
+            .execute("ALTER TABLE tracks ADD COLUMN file_key TEXT", [])
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(connection)
+}
+
+fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
+    let connection = open_index(path)?;
 
     let mut statement = connection
-        .prepare("SELECT path, size, modified_ms, lrc_size, lrc_modified_ms, node_json FROM tracks")
+        .prepare(
+            "SELECT path, size, modified_ms, lrc_size, lrc_modified_ms, file_key, node_json
+             FROM tracks",
+        )
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
@@ -485,13 +663,15 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
             let modified_ms: i64 = row.get(2)?;
             let lrc_size: i64 = row.get(3)?;
             let lrc_modified_ms: i64 = row.get(4)?;
-            let node_json: String = row.get(5)?;
+            let file_key: Option<String> = row.get(5)?;
+            let node_json: String = row.get(6)?;
             Ok((
                 path,
                 size,
                 modified_ms,
                 lrc_size,
                 lrc_modified_ms,
+                file_key,
                 node_json,
             ))
         })
@@ -499,7 +679,8 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
 
     let mut cache = HashMap::new();
     for row in rows {
-        let Ok((path, size, modified_ms, lrc_size, lrc_modified_ms, node_json)) = row else {
+        let Ok((path, size, modified_ms, lrc_size, lrc_modified_ms, file_key, node_json)) = row
+        else {
             continue;
         };
         let Ok(node) = serde_json::from_str::<Node>(&node_json) else {
@@ -517,6 +698,7 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
                     lrc_size: lrc_size as u64,
                     lrc_modified_ms: lrc_modified_ms as u64,
                 },
+                file_key,
                 node,
             },
         );
@@ -525,24 +707,7 @@ fn load_index(path: &Path) -> Result<HashMap<String, CachedTrack>, String> {
 }
 
 fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let mut connection = Connection::open(path).map_err(|error| error.to_string())?;
-    connection
-        .execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             CREATE TABLE IF NOT EXISTS tracks (
-                 path TEXT PRIMARY KEY NOT NULL,
-                 size INTEGER NOT NULL,
-                 modified_ms INTEGER NOT NULL,
-                 lrc_size INTEGER NOT NULL,
-                 lrc_modified_ms INTEGER NOT NULL,
-                 node_json TEXT NOT NULL
-             );",
-        )
-        .map_err(|error| error.to_string())?;
+    let mut connection = open_index(path)?;
 
     let updates = cache
         .updates
@@ -558,7 +723,7 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
         cache
             .entries
             .keys()
-            .filter(|path| !seen.contains(*path))
+            .filter(|path| !seen.contains_key(*path))
             .cloned()
             .collect::<Vec<_>>()
     } else {
@@ -571,13 +736,15 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
     {
         let mut upsert = transaction
             .prepare_cached(
-                "INSERT INTO tracks(path, size, modified_ms, lrc_size, lrc_modified_ms, node_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO tracks(
+                    path, size, modified_ms, lrc_size, lrc_modified_ms, file_key, node_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(path) DO UPDATE SET
                     size=excluded.size,
                     modified_ms=excluded.modified_ms,
                     lrc_size=excluded.lrc_size,
                     lrc_modified_ms=excluded.lrc_modified_ms,
+                    file_key=excluded.file_key,
                     node_json=excluded.node_json",
             )
             .map_err(|error| error.to_string())?;
@@ -591,6 +758,7 @@ fn persist_index(path: &Path, cache: &ScanCache, prune_stale: bool) -> Result<()
                     entry.fingerprint.modified_ms as i64,
                     entry.fingerprint.lrc_size as i64,
                     entry.fingerprint.lrc_modified_ms as i64,
+                    entry.file_key,
                     node_json,
                 ])
                 .map_err(|error| error.to_string())?;
@@ -778,6 +946,31 @@ fn directory_only(node: &Node) -> Node {
 mod tests {
     use super::*;
 
+    static NEXT_LIBRARY_TEST: AtomicU64 = AtomicU64::new(0);
+
+    fn temporary_library_directory() -> PathBuf {
+        let id = NEXT_LIBRARY_TEST.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "hydrogen-music-library-test-{}-{id}",
+            std::process::id()
+        ))
+    }
+
+    fn first_track(result: &ScanResult) -> &Node {
+        fn visit(nodes: &[Node]) -> Option<&Node> {
+            for node in nodes {
+                if node.node_type == "music" {
+                    return Some(node);
+                }
+                if let Some(track) = node.children.as_deref().and_then(visit) {
+                    return Some(track);
+                }
+            }
+            None
+        }
+        visit(&result.loca_files_metadata).unwrap()
+    }
+
     #[test]
     fn artist_split_does_not_break_slashes_inside_names() {
         assert_eq!(split_artists("AC/DC"), vec!["AC/DC"]);
@@ -798,6 +991,92 @@ mod tests {
         assert_eq!(first, second);
         assert!(first.starts_with("track:"));
         assert_eq!(first.len(), 38);
+    }
+
+    #[test]
+    fn library_revision_changes_when_a_track_fingerprint_changes() {
+        let path = Path::new("/music/example/song.flac");
+        let path_string = path.to_string_lossy();
+        let nodes = vec![fallback_track(path)];
+        let first_cache = ScanCache::new(HashMap::new());
+        first_cache.remember_seen(
+            &path_string,
+            Some(Fingerprint {
+                size: 100,
+                modified_ms: 200,
+                lrc_size: 0,
+                lrc_modified_ms: 0,
+            }),
+        );
+        let second_cache = ScanCache::new(HashMap::new());
+        second_cache.remember_seen(
+            &path_string,
+            Some(Fingerprint {
+                size: 101,
+                modified_ms: 200,
+                lrc_size: 0,
+                lrc_modified_ms: 0,
+            }),
+        );
+
+        assert_ne!(
+            library_revision(&nodes, &first_cache),
+            library_revision(&nodes, &second_cache)
+        );
+    }
+
+    #[test]
+    fn matching_revision_returns_only_the_scan_summary() {
+        let result = ScanResult {
+            dir_tree: vec![fallback_track(Path::new("/music/example/song.flac"))],
+            loca_files_metadata: vec![fallback_track(Path::new("/music/example/song.flac"))],
+            count: 1,
+            truncated: false,
+            complete: true,
+            revision: "revision-1".into(),
+        };
+
+        let response = serde_json::to_value(result.into_response(Some("revision-1"))).unwrap();
+
+        assert_eq!(
+            response
+                .get("unchanged")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response.get("count").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(response.get("locaFilesMetadata").is_none());
+        assert!(response.get("dirTree").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moving_a_track_on_the_same_filesystem_preserves_its_id() {
+        let temporary = temporary_library_directory();
+        let music = temporary.join("music");
+        let cache = temporary.join("cache/library-index.sqlite3");
+        fs::create_dir_all(&music).unwrap();
+        let original = music.join("before.mp3");
+        let moved = music.join("after.mp3");
+        fs::write(&original, b"not-a-real-mp3").unwrap();
+
+        let generation = AtomicU64::new(1);
+        let first = scan(std::slice::from_ref(&music), 1, &generation, true, &cache).unwrap();
+        let first_id = first_track(&first).id.clone();
+        fs::rename(&original, &moved).unwrap();
+        generation.store(2, Ordering::Release);
+        let second = scan(std::slice::from_ref(&music), 2, &generation, true, &cache).unwrap();
+        let second_track = first_track(&second);
+
+        assert_eq!(second_track.id, first_id);
+        assert_eq!(
+            second_track.common.as_ref().unwrap().file_url,
+            moved.to_string_lossy()
+        );
+        fs::remove_dir_all(temporary).unwrap();
     }
 
     #[test]

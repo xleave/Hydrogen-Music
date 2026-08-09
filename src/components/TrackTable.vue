@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { songTime2, addLocalMusicTOList, setShuffledList } from '../utils/player'
 import { noticeOpen } from '../utils/dialog'
 import { useCollectionStore } from '../store/collectionStore'
+import { useLocalStore } from '../store/localStore'
 import { useOtherStore } from '../store/otherStore'
 import { usePlayerStore } from '../store/playerStore'
 import { storeToRefs } from 'pinia'
@@ -19,38 +20,18 @@ const props = defineProps({
 const router = useRouter()
 const playerStore = usePlayerStore()
 const collectionStore = useCollectionStore()
+const localStore = useLocalStore()
 const otherStore = useOtherStore()
 const { songId, playMode } = storeToRefs(playerStore)
 
 const searchQuery = ref('')
 const sortMode = ref('default')
 
-const filteredData = computed(() => {
-  const keyword = searchQuery.value.trim().toLocaleLowerCase()
-  if (!keyword) return props.songs
-
-  return props.songs.filter((item) => {
-    const common = item.common || {}
-    const haystack = [
-      common.title,
-      common.localTitle,
-      common.album,
-      common.albumartist,
-      ...(common.artists || []),
-    ]
-      .filter(Boolean)
-      .join('\n')
-      .toLocaleLowerCase()
-    return haystack.includes(keyword)
-  })
-})
-
 const sortedData = computed(() => {
-  const list = filteredData.value
-  if (sortMode.value === 'modified_desc') {
-    return [...list].sort((a, b) => (b.common?.modifiedAt ?? 0) - (a.common?.modifiedAt ?? 0))
-  }
-  return list
+  const ordered = sortMode.value === 'modified_desc'
+    ? localStore.sortTracksByModified(props.songs)
+    : props.songs
+  return localStore.filterTracks(ordered, searchQuery.value)
 })
 
 function formatTrack(item) {

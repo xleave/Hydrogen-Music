@@ -408,7 +408,8 @@ async fn scan_local_music(
     app: AppHandle,
     settings: State<'_, SettingsState>,
     scan: State<'_, ScanState>,
-) -> Result<library::ScanResult, String> {
+    known_revision: Option<String>,
+) -> Result<library::ScanResponse, String> {
     let stored = settings
         .0
         .read()
@@ -427,10 +428,12 @@ async fn scan_local_music(
     tauri::async_runtime::spawn_blocking(move || {
         let index_path = cache_directory.join("library-index.sqlite3");
         let result = library::scan(&folders, request_id, &latest, roots_complete, &index_path)?;
-        if let Err(error) = library_snapshot::save(&cache_directory, &folders, &result) {
-            eprintln!("[library snapshot] failed to persist cache: {error}");
+        if !result.matches_revision(known_revision.as_deref()) {
+            if let Err(error) = library_snapshot::save(&cache_directory, &folders, &result) {
+                eprintln!("[library snapshot] failed to persist cache: {error}");
+            }
         }
-        Ok(result)
+        Ok(result.into_response(known_revision.as_deref()))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -521,47 +524,56 @@ async fn audio_load(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
-fn audio_play(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    audio.play()
-}
-
-#[tauri::command]
-fn audio_pause(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    audio.pause()
-}
-
-#[tauri::command]
-fn audio_seek(
-    audio: State<'_, audio::AudioState>,
-    position: f64,
-) -> Result<audio::AudioStatus, String> {
-    audio.seek(finite(position, "position")?.clamp(0.0, MAX_AUDIO_SECONDS))
-}
-
-#[tauri::command]
-fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<(), String> {
-    audio.set_volume(finite_f32(volume, "volume")?.clamp(0.0, 1.0))
-}
-
-#[tauri::command]
-async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
-    let audio = audio.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || audio.status())
+async fn run_audio_blocking<T, F>(audio: audio::AudioState, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&audio::AudioState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || operation(&audio))
         .await
         .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
-    audio.stop()
+async fn audio_play(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.play()).await
+}
+
+#[tauri::command]
+async fn audio_pause(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.pause()).await
+}
+
+#[tauri::command]
+async fn audio_seek(
+    audio: State<'_, audio::AudioState>,
+    position: f64,
+) -> Result<audio::AudioStatus, String> {
+    let position = finite(position, "position")?.clamp(0.0, MAX_AUDIO_SECONDS);
+    run_audio_blocking(audio.inner().clone(), move |audio| audio.seek(position)).await
+}
+
+#[tauri::command]
+async fn audio_set_volume(audio: State<'_, audio::AudioState>, volume: f32) -> Result<(), String> {
+    let volume = finite_f32(volume, "volume")?.clamp(0.0, 1.0);
+    run_audio_blocking(audio.inner().clone(), move |audio| audio.set_volume(volume)).await
+}
+
+#[tauri::command]
+async fn audio_status(audio: State<'_, audio::AudioState>) -> Result<audio::AudioStatus, String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.status()).await
+}
+
+#[tauri::command]
+async fn audio_stop(audio: State<'_, audio::AudioState>) -> Result<(), String> {
+    run_audio_blocking(audio.inner().clone(), |audio| audio.stop()).await
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MediaMetadataResult {
     applied: bool,
-    cover_data_url: Option<String>,
+    cover_path: Option<String>,
 }
 
 #[tauri::command]
@@ -624,20 +636,26 @@ async fn media_set_metadata(
     )?;
     Ok(MediaMetadataResult {
         applied,
-        cover_data_url: if applied { assets.cover_data_url } else { None },
+        cover_path: if applied {
+            assets
+                .media_cover_path
+                .map(|path| path.to_string_lossy().into_owned())
+        } else {
+            None
+        },
     })
 }
 
 #[tauri::command]
-fn media_set_playback(
+async fn media_set_playback(
     audio: State<'_, audio::AudioState>,
     media: State<'_, media::MediaState>,
     playing: bool,
 ) -> Result<(), String> {
-    if audio.status().is_err() {
-        return media.set_stopped();
+    match run_audio_blocking(audio.inner().clone(), |audio| audio.status_position()).await {
+        Ok(position) => media.set_playback(playing, position),
+        Err(_) => media.set_stopped(),
     }
-    media.set_playback(playing, audio.position())
 }
 
 #[tauri::command]

@@ -28,7 +28,7 @@
           <div class="item-other">
               <span class="item-name">{{item.name}}</span>
               <div class="item-info">
-                <span class="item-size">{{item.songs.length}}首</span>
+                <span class="item-size">{{item.trackIds.length}}首</span>
               </div>
           </div>
       </div>

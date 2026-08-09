@@ -366,7 +366,7 @@ function toGithub() {
 
       <div class="app-version">
         <div class="app-icon"><img src="../assets/icon/icon.ico" alt=""></div>
-        <div class="version">V0.8.5</div>
+        <div class="version">V0.8.6</div>
         <div class="app-author" @click="toGithub">Made by xleave</div>
       </div>
     </div>

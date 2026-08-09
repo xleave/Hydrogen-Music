@@ -1,11 +1,12 @@
 import { markRaw } from 'vue'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { playerRefs } from './state'
 import { loadLocalLyrics, prepareLyricsForTrackChange, resetLyricAnimation, revealLyrics } from './lyrics'
 
 const {
   currentIndex,
   currentMusic,
-  localBase64Img,
+  localCoverUrl,
   playMode,
   playing,
   progress,
@@ -184,8 +185,8 @@ export async function updateMediaSession(requestId = trackRequestId) {
   })
   if (requestId !== trackRequestId || !result?.applied) return false
 
-  const cover = result.coverDataUrl || null
-  localBase64Img.value = cover
+  const cover = result.coverPath ? convertFileSrc(result.coverPath) : null
+  localCoverUrl.value = cover
   if ('mediaSession' in navigator && 'MediaMetadata' in window) {
     if (cover) metadata.artwork = [{ src: cover }]
     navigator.mediaSession.metadata = new MediaMetadata(metadata)

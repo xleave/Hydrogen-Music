@@ -26,11 +26,9 @@
     </div>
       <div class="library-view">
         <router-view v-slot="{ Component }">
-          <keep-alive>
-            <Transition name="fade">
-              <component :is="Component" v-show="!libraryChangeAnimation"></component>
-            </Transition>
-          </keep-alive>
+          <Transition name="fade">
+            <component :is="Component" v-show="!libraryChangeAnimation"></component>
+          </Transition>
         </router-view>
         <Transition name="fade">
           <div class="library-container" v-show="(router.currentRoute.value.fullPath === '/mymusic')">

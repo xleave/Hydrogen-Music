@@ -11,7 +11,7 @@
   import { usePlayerStore } from '../store/playerStore'
   import { storeToRefs } from 'pinia'
   const playerStore = usePlayerStore()
-  const { playing, progress, playMode, songList, currentIndex, volume, time, playlistWidgetShow, lyricShow, localBase64Img } =storeToRefs(playerStore)
+  const { playing, progress, playMode, songList, currentIndex, volume, time, playlistWidgetShow, lyricShow, localCoverUrl } =storeToRefs(playerStore)
   const showMusicTime = ref(false)
 
   const showPlayer = () => {
@@ -28,7 +28,7 @@
     </div>
     <div class="music-info">
         <div class="music-img" @click="showPlayer()">
-            <img v-show="localBase64Img" :src="localBase64Img" alt="">
+            <img v-show="localCoverUrl" :src="localCoverUrl" alt="">
             <div class="open-player">
                 <AppIcon name="expand" class="open-player-icon" />
             </div>
