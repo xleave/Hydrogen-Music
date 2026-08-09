@@ -2,13 +2,14 @@
   import { useRouter } from 'vue-router'
   import LibraryType from '../components/LibraryType.vue'
   import LocalMusicList from '../components/LocalMusicList.vue'
+  import CollectionList from '../components/CollectionList.vue'
   import { usePlayerStore } from '../store/playerStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { useLocalStore } from '../store/localStore';
   import { storeToRefs } from 'pinia'
   const router = useRouter()
   const libraryStore = useLibraryStore()
-  const { libraryChangeAnimation } = storeToRefs(libraryStore)
+  const { libraryChangeAnimation, librarySection } = storeToRefs(libraryStore)
   const playerStore = usePlayerStore()
   const localStore = useLocalStore()
   const { localDirectoryTree, localMusicClassify, localFolderSettings } = storeToRefs(localStore)
@@ -19,8 +20,9 @@
   <div class="my-music" :class="{'my-music-full': !playerStore.hasPlaylist}">
     <div class="music-library">
       <LibraryType class="library-type"></LibraryType>
-      <LocalMusicList :folderlist="localDirectoryTree" :classifylist="localMusicClassify" type="local" v-if="localDirectoryTree" class="local-list"></LocalMusicList>
-      <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length === 0">去设置扫描地址</div>
+      <LocalMusicList :folderlist="localDirectoryTree" :classifylist="localMusicClassify" type="local" v-if="librarySection === 'local' && localDirectoryTree" class="local-list"></LocalMusicList>
+      <CollectionList v-else-if="librarySection === 'collections'" class="local-list" />
+      <div class="no-folder" @click="router.push('/settings')" v-if="librarySection === 'local' && localFolderSettings.length === 0">去设置扫描地址</div>
     </div>
       <div class="library-view">
         <router-view v-slot="{ Component }">
