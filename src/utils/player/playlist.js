@@ -23,6 +23,7 @@ let playlistHydrated = false
 let saveRevision = 0
 let savedRevision = 0
 let pendingSnapshot = null
+let lastSavedSnapshot = null
 let saveLoop = null
 let structureRevision = 0
 let cachedStructureRevision = -1
@@ -223,6 +224,7 @@ async function drainPlaylistSaves() {
       const revision = saveRevision
       const payload = pendingSnapshot
       await windowApi.saveLastPlaylist(payload)
+      lastSavedSnapshot = payload
       savedRevision = revision
     }
   } finally {
@@ -238,7 +240,10 @@ function ensureSaveLoop() {
 
 export function savePlaylist() {
   if (!playlistHydrated) return Promise.resolve()
-  pendingSnapshot = compactPlaylistJson()
+  const snapshot = compactPlaylistJson()
+  if (saveLoop && snapshot === pendingSnapshot) return saveLoop
+  if (!saveLoop && snapshot === lastSavedSnapshot) return Promise.resolve()
+  pendingSnapshot = snapshot
   saveRevision += 1
   return ensureSaveLoop()
 }
