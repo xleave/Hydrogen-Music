@@ -16,8 +16,10 @@ const {
   volume,
 } = playerRefs
 const PROGRESS_POLL_INTERVAL_MS = 200
+const BACKGROUND_PROGRESS_RENDER_INTERVAL_MS = 1_000
 let progressTimer = null
 let statusPending = false
+let lastProgressRenderAt = 0
 let sequentialPlaybackEnded = false
 let nextTrackHandler = null
 let playbackCheckpointHandler = null
@@ -105,9 +107,19 @@ export function registerNextTrackHandler(handler) { nextTrackHandler = handler }
 export function registerPlaybackCheckpointHandler(handler) { playbackCheckpointHandler = handler }
 function currentTrack() { return songList.value?.[currentIndex.value] ?? null }
 
+function shouldRenderProgress() {
+  const now = performance.now()
+  if (document.hasFocus() || now - lastProgressRenderAt >= BACKGROUND_PROGRESS_RENDER_INTERVAL_MS) {
+    lastProgressRenderAt = now
+    return true
+  }
+  return false
+}
+
 export function stopProgress() {
   if (progressTimer !== null) clearInterval(progressTimer)
   progressTimer = null
+  lastProgressRenderAt = 0
 }
 
 function updateProgress() {
@@ -117,7 +129,8 @@ function updateProgress() {
   statusPending = true
   music.sync().then((status) => {
     if (music !== currentMusic.value) return
-    progress.value = Math.min(status.position, status.duration)
+    const position = Math.min(status.position, status.duration)
+    if (status.ended || shouldRenderProgress()) progress.value = position
     time.value = Math.floor(status.duration)
     if (status.ended && !music.endHandled) {
       music.endHandled = true
