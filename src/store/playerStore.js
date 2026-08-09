@@ -1,5 +1,19 @@
 import { defineStore } from "pinia";
 
+const LYRIC_PREFERENCES = new Set(['original', 'trans', 'roma'])
+
+function initialLyricPreferences() {
+    if (typeof localStorage === 'undefined') return ['original']
+    try {
+        const persisted = JSON.parse(localStorage.getItem('playerStore') || 'null')
+        const values = persisted?.lyricPreferences || persisted?.lyricType
+        if (!Array.isArray(values)) return ['original']
+        return [...new Set(values.filter((value) => LYRIC_PREFERENCES.has(value)))]
+    } catch {
+        return ['original']
+    }
+}
+
 export const usePlayerStore = defineStore('playerStore', {
     state: () => {
         return {
@@ -19,12 +33,13 @@ export const usePlayerStore = defineStore('playerStore', {
             time: 0, //歌曲总时长
             playlistWidgetShow: false,
             playerChangeSong: false, //player页面切换歌曲更换歌名动画,
-            lyric: null,
             lyricsObjArr: null,
+            lyricsSynchronized: false,
             lyricSize: null,
             tlyricSize: null,
             rlyricSize: null,
-            lyricType: ['original'],
+            lyricPreferences: initialLyricPreferences(),
+            lyricAvailability: { original: false, trans: false, roma: false },
             lyricInterludeTime: null, //歌词间奏等待时间
             lyricShow: false, //歌词是否显示
             lyricAnimationRevision: 0,
@@ -41,11 +56,27 @@ export const usePlayerStore = defineStore('playerStore', {
         hasPlaylist: (state) => Array.isArray(state.songList) && state.songList.length > 0,
     },
     actions: {
+        applyParsedLyrics(parsed) {
+            this.lyricsObjArr = parsed.lines.length ? parsed.lines : null
+            this.lyricsSynchronized = parsed.synchronized
+            this.lyricAvailability = { ...parsed.availability }
+        },
+        clearLyrics() {
+            this.lyricsObjArr = null
+            this.lyricsSynchronized = false
+            this.lyricAvailability = { original: false, trans: false, roma: false }
+        },
+        toggleLyricPreference(type) {
+            if (!LYRIC_PREFERENCES.has(type)) return
+            this.lyricPreferences = this.lyricPreferences.includes(type)
+                ? this.lyricPreferences.filter((value) => value !== type)
+                : [...this.lyricPreferences, type]
+        },
     },
     persist: {
         storage: localStorage,
         // 播放队列、歌曲、进度、音量和播放模式统一由 last-playlist.json 持久化，
         // 避免与 localStorage 形成两套 source of truth，并避免高频 progress 同步写入。
-        paths: ['lyricType','coverBlur','lyricBlur']
+        paths: ['lyricPreferences','coverBlur','lyricBlur']
     },
 })

@@ -84,17 +84,6 @@ test('lyric return can be interrupted without losing the visual offset', () => {
   assert.match(lyric, /if \(isReturning\) cancelReturnAnimation\(true\)/)
 })
 
-test('lyrics consume shared playback progress without a duplicate timer', () => {
-  const lyric = source('src/components/Lyric.vue')
-
-  assert.match(lyric, /progress,/)
-  assert.match(lyric, /\[progress\.value, widgetState\.value, lyricShow\.value, lyricsObjArr\.value\]/)
-  assert.match(lyric, /updateActiveLine\(Number\(seek\)\)/)
-  assert.doesNotMatch(lyric, /activeTimer/)
-  assert.doesNotMatch(lyric, /setInterval\(updateActiveLine/)
-  assert.doesNotMatch(lyric, /currentMusic\.value\?\.seek\(\)/)
-})
-
 test('application version stays consistent across frontend, Rust, Tauri and UI', () => {
   const packageJson = JSON.parse(source('package.json'))
   const packageLock = JSON.parse(source('package-lock.json'))

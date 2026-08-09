@@ -1,13 +1,13 @@
-import { playerRefs } from './state'
+import { parseLyrics } from '../lyrics/lrcParser.mjs'
+import { playerRefs, playerStore } from './state'
 
-const { isLyricDelay, lyric, lyricAnimationRevision, lyricShow, lyricsObjArr, playerChangeSong, widgetState } = playerRefs
+const { isLyricDelay, lyricAnimationRevision, lyricShow, playerChangeSong, widgetState } = playerRefs
 let delayTimer = null
 
 export async function loadLocalLyrics(filePath, requestId, currentRequestId) {
   const value = await windowApi.getLocalMusicLyric(filePath)
   if (requestId !== currentRequestId()) return false
-  lyric.value = value ? { lrc: { lyric: value } } : null
-  lyricsObjArr.value = null
+  playerStore.applyParsedLyrics(parseLyrics(value ? { lrc: { lyric: value } } : null))
   return true
 }
 
@@ -19,8 +19,7 @@ export function resetLyricAnimation(delay = 600) {
 }
 
 export function prepareLyricsForTrackChange() {
-  lyric.value = null
-  lyricsObjArr.value = null
+  playerStore.clearLyrics()
   if (lyricShow.value) {
     lyricShow.value = false
     playerChangeSong.value = true
