@@ -122,7 +122,6 @@ pub(crate) struct MediaMetadataResult {
 pub(crate) async fn media_set_metadata(
     app: AppHandle,
     media: State<'_, media::MediaState>,
-    cover_cache: State<'_, track_assets::CoverCache>,
     title: String,
     artist: String,
     album: String,
@@ -141,7 +140,7 @@ pub(crate) async fn media_set_metadata(
             .path()
             .app_cache_dir()
             .map_err(|error| error.to_string())?;
-        let cover_cache = cover_cache.inner().clone();
+        let cover_cache = app.state::<track_assets::CoverCache>().inner().clone();
         tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
             let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
             Ok(match cover_cache.read(&cache_directory, &file_path) {
