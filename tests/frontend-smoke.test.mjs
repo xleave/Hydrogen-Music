@@ -42,6 +42,25 @@ test('native volume synchronization belongs to player lifecycle', () => {
   assert.match(lifecycle, /currentMusic\.value\.volume\(normalized\)/)
 })
 
+test('startup state crosses the WebView bridge in one bootstrap call', () => {
+  const initApp = source('src/utils/initApp.js')
+  const windowApi = source('src/platform/windowApi.js')
+
+  assert.match(initApp, /windowApi\.getBootstrapState\(\)/)
+  assert.match(windowApi, /getBootstrapState:\s*\(\)\s*=>\s*invoke\('get_bootstrap_state'\)/)
+  assert.doesNotMatch(initApp, /loadLastSong\(\)\.catch/)
+  assert.doesNotMatch(initApp, /collectionStore\.hydrate\(\)\.catch/)
+})
+
+test('playback renders from a local clock and reconciles native state at one hertz', () => {
+  const playback = source('src/utils/player/playback.js')
+
+  assert.match(playback, /NATIVE_STATUS_INTERVAL_MS = 1_000/)
+  assert.match(playback, /music\.estimatedPosition\(now\)/)
+  assert.match(playback, /music\.shouldReconcile\(now\)/)
+  assert.doesNotMatch(playback, /if \(!playing\.value \|\| statusPending\) return/)
+})
+
 test('settings remains a global overlay above the full-screen player', () => {
   const app = source('src/App.vue')
   const style = source('src/style.css')

@@ -2,6 +2,7 @@ import { markRaw } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { playerRefs } from './state'
 import { loadLocalLyrics, prepareLyricsForTrackChange, resetLyricAnimation, revealLyrics } from './lyrics'
+import { PlaybackClock } from './playbackClock.mjs'
 
 const {
   currentIndex,
@@ -16,6 +17,7 @@ const {
   volume,
 } = playerRefs
 const PROGRESS_POLL_INTERVAL_MS = 200
+const NATIVE_STATUS_INTERVAL_MS = 1_000
 const BACKGROUND_PROGRESS_RENDER_INTERVAL_MS = 1_000
 let progressTimer = null
 let statusPending = false
@@ -54,22 +56,20 @@ function invalidateTrackRequest() {
 
 class NativeMusic {
   constructor(status) {
-    this.position = status.position
-    this.trackDuration = status.duration
+    this.clock = new PlaybackClock(status, performance.now())
     this.loaded = true
     this.looping = false
     this.endHandled = false
   }
   applyStatus(status) {
-    this.position = status.position
-    this.trackDuration = status.duration
+    this.clock.apply(status, performance.now())
     return status
   }
   play() { return windowApi.audioPlay().then((status) => this.applyStatus(status)) }
   pause() { return windowApi.audioPause().then((status) => this.applyStatus(status)) }
   seek(position) {
-    if (position === undefined) return this.position
-    const target = Math.max(0, Math.min(Number(position) || 0, this.trackDuration || 0))
+    if (position === undefined) return this.estimatedPosition()
+    const target = Math.max(0, Math.min(Number(position) || 0, this.duration()))
     this.endHandled = false
     windowApi.audioSeek(target).then((status) => {
       this.applyStatus(status)
@@ -84,7 +84,12 @@ class NativeMusic {
     })
     return target
   }
-  duration() { return this.trackDuration }
+  duration() { return this.clock.duration }
+  estimatedPosition(now = performance.now()) { return this.clock.estimate(now) }
+  shouldReconcile(now = performance.now()) {
+    return this.clock.shouldReconcile(now, NATIVE_STATUS_INTERVAL_MS)
+      || this.clock.needsEndConfirmation(now, PROGRESS_POLL_INTERVAL_MS / 1_000)
+  }
   volume(value) {
     if (value === undefined) return volume.value
     windowApi.audioSetVolume(value).catch((error) => reportAudioError('audio.volume', error))
@@ -123,9 +128,14 @@ export function stopProgress() {
 }
 
 function updateProgress() {
-  if (!playing.value || statusPending) return
+  if (!playing.value) return
   const music = currentMusic.value
   if (!music) return
+  const now = performance.now()
+  const estimatedPosition = music.estimatedPosition(now)
+  if (shouldRenderProgress()) progress.value = estimatedPosition
+  time.value = Math.floor(music.duration())
+  if (statusPending || !music.shouldReconcile(now)) return
   statusPending = true
   music.sync().then((status) => {
     if (music !== currentMusic.value) return

@@ -1,6 +1,8 @@
 import { readdirSync, statSync } from 'node:fs'
 import { extname } from 'node:path'
 
+import { buildPlaylistCheckpoint } from '../src/utils/player/playlistCheckpoint.mjs'
+
 const assetDirectory = new URL('../dist/assets/', import.meta.url)
 const assets = readdirSync(assetDirectory)
   .map((name) => ({ name, bytes: statSync(new URL(name, assetDirectory)).size }))
@@ -19,6 +21,19 @@ const playlist = JSON.stringify({
   volume: 0.3,
   playMode: 3,
 })
+const playlistState = {
+  structureRevision: 1,
+  songIds: ids,
+  shuffledSongIds: [...ids].reverse(),
+  currentSongId: ids[5_000],
+  currentIndex: 5_000,
+  shuffleIndex: 4_999,
+  progress: 183.25,
+  volume: 0.3,
+  playMode: 3,
+}
+const structuralCheckpoint = buildPlaylistCheckpoint(playlistState, true)
+const scalarCheckpoint = buildPlaylistCheckpoint(playlistState, false)
 
 const report = {
   productionAssets: {
@@ -33,7 +48,9 @@ const report = {
   },
   playlistCheckpoint: {
     tracks: ids.length,
-    bytes: Buffer.byteLength(playlist),
+    legacyV3Bytes: Buffer.byteLength(playlist),
+    structuralV4Bytes: Buffer.byteLength(structuralCheckpoint.payload),
+    scalarV4Bytes: Buffer.byteLength(scalarCheckpoint.payload),
   },
 }
 

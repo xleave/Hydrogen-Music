@@ -1,14 +1,11 @@
-import dayjs from 'dayjs'
-import duration from 'dayjs/plugin/duration'
-
-dayjs.extend(duration)
-
 export function songTime(value) {
   if (value === 0 || value === '--') return value
   if (!value) return undefined
 
-  const parsed = dayjs.duration(value)
-  return `${parsed.minutes()}:${parsed.seconds().toString().padStart(2, '0')}`
+  const totalSeconds = Math.floor(Number(value) / 1_000)
+  const minutes = Math.floor(totalSeconds / 60) % 60
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
 export function songTime2(value) {
