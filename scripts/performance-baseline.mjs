@@ -1,11 +1,15 @@
-import { readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { extname } from 'node:path'
+import { gzipSync } from 'node:zlib'
 
 import { buildPlaylistCheckpoint } from '../src/utils/player/playlistCheckpoint.mjs'
 
 const assetDirectory = new URL('../dist/assets/', import.meta.url)
 const assets = readdirSync(assetDirectory)
-  .map((name) => ({ name, bytes: statSync(new URL(name, assetDirectory)).size }))
+  .map((name) => {
+    const url = new URL(name, assetDirectory)
+    return { name, bytes: statSync(url).size, gzipBytes: gzipSync(readFileSync(url)).length }
+  })
 const codeAndStyles = assets.filter(({ name }) => ['.js', '.css'].includes(extname(name)))
 
 const ids = Array.from({ length: 10_000 }, (_, index) =>
@@ -38,9 +42,13 @@ const scalarCheckpoint = buildPlaylistCheckpoint(playlistState, false)
 const report = {
   productionAssets: {
     codeAndStylesBytes: codeAndStyles.reduce((sum, asset) => sum + asset.bytes, 0),
+    codeAndStylesGzipBytes: codeAndStyles.reduce((sum, asset) => sum + asset.gzipBytes, 0),
     javascriptBytes: codeAndStyles
       .filter(({ name }) => extname(name) === '.js')
       .reduce((sum, asset) => sum + asset.bytes, 0),
+    javascriptGzipBytes: codeAndStyles
+      .filter(({ name }) => extname(name) === '.js')
+      .reduce((sum, asset) => sum + asset.gzipBytes, 0),
     cssBytes: codeAndStyles
       .filter(({ name }) => extname(name) === '.css')
       .reduce((sum, asset) => sum + asset.bytes, 0),
@@ -51,6 +59,7 @@ const report = {
     legacyV3Bytes: Buffer.byteLength(playlist),
     structuralV4Bytes: Buffer.byteLength(structuralCheckpoint.payload),
     scalarV4Bytes: Buffer.byteLength(scalarCheckpoint.payload),
+    scalarPersistedBytes: Buffer.byteLength(JSON.stringify(JSON.parse(scalarCheckpoint.payload), null, 2)),
   },
 }
 
