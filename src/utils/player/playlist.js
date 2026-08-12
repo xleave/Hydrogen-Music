@@ -4,6 +4,7 @@ import pinia from '../../store/pinia'
 import { playerRefs } from './state'
 import { addSong, getSongUrl, registerNextTrackHandler } from './playback'
 import { buildPlaylistCheckpoint } from './playlistCheckpoint.mjs'
+import { queueSelection, shuffledTracks } from './playbackOrder.mjs'
 
 const localStore = useLocalStore(pinia)
 const {
@@ -91,16 +92,7 @@ export function markPlaylistCleared() {
 }
 
 export function setShuffledList(playAll = false) {
-  const shuffled = [...(songList.value || [])]
-  for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const target = Math.floor(Math.random() * (index + 1))
-    ;[shuffled[index], shuffled[target]] = [shuffled[target], shuffled[index]]
-  }
-  if (!playAll && songId.value) {
-    const current = shuffled.findIndex((track) => track.id === songId.value)
-    if (current >= 0) shuffled.unshift(...shuffled.splice(current, 1))
-  }
-  shuffledList.value = shuffled
+  shuffledList.value = shuffledTracks(songList.value, songId.value, playAll)
   shuffleIndex.value = 0
   markStructureChanged()
 }
@@ -109,15 +101,14 @@ function activeList() { return playMode.value === 3 ? shuffledList.value : songL
 function activeIndex() { return playMode.value === 3 ? shuffleIndex.value : currentIndex.value }
 
 function playAt(index) {
-  const list = activeList() || []
-  if (!list.length) return
-  const normalizedIndex = (index + list.length) % list.length
-  const track = list[normalizedIndex]
+  const selection = queueSelection(playMode.value, index, songList.value, shuffledList.value)
+  if (!selection) return
+  const { track } = selection
   if (playMode.value === 3) {
-    shuffleIndex.value = normalizedIndex
-    currentIndex.value = songList.value.findIndex((song) => song.id === track.id)
+    shuffleIndex.value = selection.shuffleIndex
+    currentIndex.value = selection.currentIndex
   } else {
-    currentIndex.value = normalizedIndex
+    currentIndex.value = selection.currentIndex
   }
   songId.value = track.id
   addSong(track.id, currentIndex.value, true)

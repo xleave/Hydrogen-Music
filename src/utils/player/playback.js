@@ -3,6 +3,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { playerRefs } from './state'
 import { loadLocalLyrics, prepareLyricsForTrackChange, resetLyricAnimation, revealLyrics } from './lyrics'
 import { PlaybackClock } from './playbackClock.mjs'
+import { trackEndAction } from './playbackOrder.mjs'
 
 const {
   currentIndex,
@@ -163,14 +164,15 @@ export function startProgress() {
 
 function handleTrackEnd() {
   stopProgress()
-  if (playMode.value === 0 && currentIndex.value >= songList.value.length - 1) {
+  const action = trackEndAction(playMode.value, currentIndex.value, songList.value.length)
+  if (action === 'stop') {
     playing.value = false
     sequentialPlaybackEnded = true
     syncSystemPlayback({ playing: false, position: progress.value })
     checkpointPlayback()
     return
   }
-  if (playMode.value === 2) {
+  if (action === 'repeat') {
     progress.value = 0
     resetLyricAnimation()
     getSongUrl(currentIndex.value, true)
