@@ -268,6 +268,7 @@ export function installWindowApi() {
     systemMediaControl: (callback) => subscribe('systemMediaControl', callback),
     setSettings: (settings) => invoke('set_settings', { settings }),
     getSettings: () => invoke('get_settings'),
+    getBootstrapState: () => invoke('get_bootstrap_state'),
     listSystemFonts: () => invoke('list_system_fonts'),
     openFile: () => invoke('select_local_folder'),
     openLocalFolder: (filePath) => invoke('reveal_music_file', { filePath }),

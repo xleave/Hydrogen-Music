@@ -12,7 +12,7 @@ mod system_fonts;
 mod track_assets;
 
 use lofty::{file::TaggedFileExt, read_from_path, tag::ItemKey};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -56,6 +56,14 @@ pub(crate) struct PersistenceState(pub(crate) Arc<Mutex<()>>);
 
 #[derive(Clone, Default)]
 struct PlaybackSnapshotState(Arc<RwLock<Option<Value>>>);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BootstrapState {
+    settings: Value,
+    last_playlist: Option<Value>,
+    collections: collections::Collections,
+}
 
 #[derive(Clone, Default)]
 struct ExitState(Arc<AtomicBool>);
@@ -299,6 +307,39 @@ fn sanitize_playlist(value: &Value) -> Result<Value, String> {
     }))
 }
 
+fn sanitize_playlist_update(value: &Value, current: Option<&Value>) -> Result<Value, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "playlist must be an object".to_string())?;
+    let has_structure = object.contains_key("songIds") || object.contains_key("songList");
+    if has_structure {
+        return sanitize_playlist(value);
+    }
+    if object.get("version").and_then(Value::as_u64) != Some(4) {
+        return sanitize_playlist(value);
+    }
+
+    let mut merged = current
+        .cloned()
+        .ok_or_else(|| "playlist structure is required for the first checkpoint".to_string())?;
+    let merged_object = merged
+        .as_object_mut()
+        .ok_or_else(|| "stored playlist must be an object".to_string())?;
+    for key in [
+        "currentSongId",
+        "currentIndex",
+        "shuffleIndex",
+        "progress",
+        "volume",
+        "playMode",
+    ] {
+        if let Some(next) = object.get(key) {
+            merged_object.insert(key.to_string(), next.clone());
+        }
+    }
+    sanitize_playlist(&merged)
+}
+
 pub(crate) async fn write_json_async(
     app: AppHandle,
     writer: Arc<Mutex<()>>,
@@ -540,6 +581,34 @@ fn get_settings(settings: State<'_, SettingsState>) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn get_bootstrap_state(
+    settings: State<'_, SettingsState>,
+    snapshot: State<'_, PlaybackSnapshotState>,
+    collections: State<'_, collections::CollectionsState>,
+) -> Result<BootstrapState, String> {
+    let settings = settings
+        .0
+        .read()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let last_playlist = snapshot
+        .0
+        .read()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let collections = collections
+        .0
+        .read()
+        .map_err(|error| error.to_string())?
+        .clone();
+    Ok(BootstrapState {
+        settings,
+        last_playlist,
+        collections,
+    })
+}
+
+#[tauri::command]
 async fn set_settings(
     app: AppHandle,
     state: State<'_, SettingsState>,
@@ -613,7 +682,12 @@ async fn save_last_playlist(
         return Err("playlist payload is too large".to_string());
     }
     let raw: Value = serde_json::from_str(&playlist).map_err(|error| error.to_string())?;
-    let value = sanitize_playlist(&raw)?;
+    let current = snapshot
+        .0
+        .read()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let value = sanitize_playlist_update(&raw, current.as_ref())?;
     *snapshot.0.write().map_err(|error| error.to_string())? = Some(value.clone());
     write_json_async(app, persistence.0.clone(), "last-playlist.json", value).await
 }
@@ -921,6 +995,7 @@ pub fn run() {
             open_project_page,
             reveal_music_file,
             get_settings,
+            get_bootstrap_state,
             set_settings,
             get_last_playlist,
             save_last_playlist,
@@ -933,4 +1008,64 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Hydrogen Music");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_playlist, sanitize_playlist_update};
+    use serde_json::json;
+
+    #[test]
+    fn scalar_playlist_update_preserves_queue_structure() {
+        let current = sanitize_playlist(&json!({
+            "version": 3,
+            "songIds": ["track:a", "track:b"],
+            "shuffledSongIds": ["track:b", "track:a"],
+            "currentSongId": "track:a",
+            "currentIndex": 0,
+            "shuffleIndex": 1,
+            "progress": 10,
+            "volume": 0.3,
+            "playMode": 3,
+        }))
+        .unwrap();
+        let updated = sanitize_playlist_update(
+            &json!({
+                "version": 4,
+                "structureRevision": 8,
+                "currentSongId": "track:b",
+                "currentIndex": 1,
+                "shuffleIndex": 0,
+                "progress": 42.5,
+                "volume": 0.6,
+                "playMode": 1,
+            }),
+            Some(&current),
+        )
+        .unwrap();
+
+        assert_eq!(updated["version"], 3);
+        assert_eq!(updated["songIds"], json!(["track:a", "track:b"]));
+        assert_eq!(updated["shuffledSongIds"], json!(["track:b", "track:a"]));
+        assert_eq!(updated["currentSongId"], "track:b");
+        assert_eq!(updated["progress"], 42.5);
+    }
+
+    #[test]
+    fn first_playlist_checkpoint_requires_structure() {
+        let error = sanitize_playlist_update(
+            &json!({
+                "version": 4,
+                "structureRevision": 1,
+                "progress": 1,
+            }),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "playlist structure is required for the first checkpoint"
+        );
+    }
 }

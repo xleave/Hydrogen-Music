@@ -3,6 +3,7 @@ import { useLocalStore } from '../../store/localStore'
 import pinia from '../../store/pinia'
 import { playerRefs } from './state'
 import { addSong, getSongUrl, registerNextTrackHandler } from './playback'
+import { buildPlaylistCheckpoint } from './playlistCheckpoint.mjs'
 
 const localStore = useLocalStore(pinia)
 const {
@@ -23,9 +24,13 @@ let playlistHydrated = false
 let saveRevision = 0
 let savedRevision = 0
 let pendingSnapshot = null
-let lastSavedSnapshot = null
+let pendingSignature = null
+let pendingStructureRevision = null
+let lastSavedSignature = null
 let saveLoop = null
 let structureRevision = 0
+let persistedStructureRevision = -1
+let inFlightStructureRevision = null
 let cachedStructureRevision = -1
 let cachedSongCount = -1
 let cachedShuffleCount = -1
@@ -206,16 +211,21 @@ function refreshStructureCacheIfNeeded() {
   cachedShuffleCount = shuffled.length
 }
 
-function compactPlaylistJson() {
+function compactPlaylistCheckpoint() {
   refreshStructureCacheIfNeeded()
-  const currentSongId = JSON.stringify(songId.value ?? null)
-  const currentIndexValue = Number.isInteger(currentIndex.value) ? Math.max(0, currentIndex.value) : 0
-  const shuffleIndexValue = Number.isInteger(shuffleIndex.value) ? Math.max(0, shuffleIndex.value) : 0
-  const progressValue = Number.isFinite(progress.value) ? Math.max(0, progress.value) : 0
-  const volumeValue = Number.isFinite(volume.value) ? Math.max(0, Math.min(1, volume.value)) : 0.3
-  const playModeValue = Number.isInteger(playMode.value) ? Math.max(0, Math.min(3, playMode.value)) : 0
-
-  return `{"version":3,"songIds":${cachedSongIdsJson},"shuffledSongIds":${cachedShuffledIdsJson},"currentSongId":${currentSongId},"currentIndex":${currentIndexValue},"shuffleIndex":${shuffleIndexValue},"progress":${progressValue},"volume":${volumeValue},"playMode":${playModeValue}}`
+  const includeStructure = structureRevision !== persistedStructureRevision
+    && structureRevision !== inFlightStructureRevision
+  return buildPlaylistCheckpoint({
+    structureRevision,
+    songIdsJson: cachedSongIdsJson,
+    shuffledSongIdsJson: cachedShuffledIdsJson,
+    currentSongId: songId.value,
+    currentIndex: currentIndex.value,
+    shuffleIndex: shuffleIndex.value,
+    progress: progress.value,
+    volume: volume.value,
+    playMode: playMode.value,
+  }, includeStructure)
 }
 
 async function drainPlaylistSaves() {
@@ -223,9 +233,19 @@ async function drainPlaylistSaves() {
     while (savedRevision < saveRevision) {
       const revision = saveRevision
       const payload = pendingSnapshot
-      await windowApi.saveLastPlaylist(payload)
-      lastSavedSnapshot = payload
-      savedRevision = revision
+      const signature = pendingSignature
+      const payloadStructureRevision = pendingStructureRevision
+      inFlightStructureRevision = payloadStructureRevision
+      try {
+        await windowApi.saveLastPlaylist(payload)
+        if (payloadStructureRevision !== null) {
+          persistedStructureRevision = Math.max(persistedStructureRevision, payloadStructureRevision)
+        }
+        lastSavedSignature = signature
+        savedRevision = revision
+      } finally {
+        inFlightStructureRevision = null
+      }
     }
   } finally {
     saveLoop = null
@@ -240,16 +260,18 @@ function ensureSaveLoop() {
 
 export function savePlaylist() {
   if (!playlistHydrated) return Promise.resolve()
-  const snapshot = compactPlaylistJson()
-  if (saveLoop && snapshot === pendingSnapshot) return saveLoop
-  if (!saveLoop && snapshot === lastSavedSnapshot) return Promise.resolve()
-  pendingSnapshot = snapshot
+  const checkpoint = compactPlaylistCheckpoint()
+  if (saveLoop && checkpoint.signature === pendingSignature) return saveLoop
+  if (!saveLoop && checkpoint.signature === lastSavedSignature) return Promise.resolve()
+  pendingSnapshot = checkpoint.payload
+  pendingSignature = checkpoint.signature
+  pendingStructureRevision = checkpoint.structureRevision
   saveRevision += 1
   return ensureSaveLoop()
 }
 
-export async function loadLastSong() {
-  pendingPlaylist = await windowApi.getLastPlaylist()
+export async function loadLastSong(initialPlaylist) {
+  pendingPlaylist = arguments.length ? initialPlaylist : await windowApi.getLastPlaylist()
   if (pendingPlaylist) {
     if (Number.isFinite(pendingPlaylist.volume)) volume.value = Math.max(0, Math.min(1, pendingPlaylist.volume))
     if (Number.isInteger(pendingPlaylist.playMode)) playMode.value = Math.max(0, Math.min(3, pendingPlaylist.playMode))
