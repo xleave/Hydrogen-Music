@@ -91,8 +91,8 @@ export function flushSettings() {
   return settingsSaveLoop
 }
 
-export async function initSettings() {
-  const settings = await windowApi.getSettings()
+export async function initSettings(initialSettings) {
+  const settings = arguments.length ? initialSettings : await windowApi.getSettings()
   if (!settings) return null
 
   lyricSize.value = settings.music.lyricSize
@@ -127,7 +127,9 @@ export async function initSettings() {
 }
 
 export function init() {
-  initSettings().catch((error) => console.error('[settings.init]', error))
-  loadLastSong().catch((error) => console.error('[playlist.restore]', error))
-  collectionStore.hydrate().catch((error) => console.error('[collections.restore]', error))
+  windowApi.getBootstrapState().then((bootstrap) => {
+    initSettings(bootstrap.settings).catch((error) => console.error('[settings.init]', error))
+    loadLastSong(bootstrap.lastPlaylist).catch((error) => console.error('[playlist.restore]', error))
+    collectionStore.hydrate(bootstrap.collections).catch((error) => console.error('[collections.restore]', error))
+  }).catch((error) => console.error('[bootstrap.init]', error))
 }

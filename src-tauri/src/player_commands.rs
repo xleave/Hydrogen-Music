@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
@@ -133,34 +133,30 @@ pub(crate) async fn media_set_metadata(
     let title = bounded_text(&title, MAX_TEXT_CHARS);
     let artist = bounded_text(&artist, MAX_TEXT_CHARS);
     let album = bounded_text(&album, MAX_TEXT_CHARS);
-    let assets = if let Some(file_path) = file_path {
+    let cover_path = if let Some(file_path) = file_path {
         let settings = app.state::<SettingsState>();
         let folders = configured_music_folders(settings.inner())?;
         let cache_directory = app
             .path()
             .app_cache_dir()
             .map_err(|error| error.to_string())?;
-        tauri::async_runtime::spawn_blocking(
-            move || -> Result<track_assets::TrackAssets, String> {
-                let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
-                Ok(
-                    match track_assets::read_for_media(&cache_directory, &file_path, generation) {
-                        Ok(assets) => assets,
-                        Err(error) => {
-                            eprintln!("[media artwork] ignored: {error}");
-                            track_assets::TrackAssets::default()
-                        }
-                    },
-                )
-            },
-        )
+        let cover_cache = app.state::<track_assets::CoverCache>().inner().clone();
+        tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
+            let file_path = authorized_file_path_from_folders(&folders, &file_path)?;
+            Ok(match cover_cache.read(&cache_directory, &file_path) {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("[media artwork] ignored: {error}");
+                    None
+                }
+            })
+        })
         .await
         .map_err(|error| error.to_string())??
     } else {
-        track_assets::TrackAssets::default()
+        None
     };
-    let cover_url = assets
-        .media_cover_path
+    let cover_url = cover_path
         .as_ref()
         .map(|path| media_cover_url(path))
         .transpose()?;
@@ -175,9 +171,7 @@ pub(crate) async fn media_set_metadata(
     Ok(MediaMetadataResult {
         applied,
         cover_path: if applied {
-            assets
-                .media_cover_path
-                .map(|path| path.to_string_lossy().into_owned())
+            cover_path.map(|path| path.to_string_lossy().into_owned())
         } else {
             None
         },

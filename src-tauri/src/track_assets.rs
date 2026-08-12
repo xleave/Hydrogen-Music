@@ -1,30 +1,42 @@
 use lofty::{file::TaggedFileExt, read_from_path};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
+    time::SystemTime,
 };
 
 const MAX_COVER_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COVER_DIMENSION: u32 = 8192;
 const MAX_COVER_PIXELS: u64 = 32 * 1024 * 1024;
+const MAX_MEMORY_CACHE_ENTRIES: usize = 64;
 
 struct EmbeddedCover {
     data: Vec<u8>,
     extension: &'static str,
 }
 
-#[derive(Default)]
-pub struct TrackAssets {
-    pub media_cover_path: Option<PathBuf>,
+#[derive(Clone, PartialEq, Eq)]
+struct SourceStamp {
+    bytes: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Clone)]
+struct CachedCover {
+    source: SourceStamp,
+    path: Option<PathBuf>,
+    last_used: u64,
 }
 
 #[derive(Clone, Default)]
 pub struct CoverCache {
     next_generation: Arc<AtomicU64>,
+    entries: Arc<Mutex<HashMap<PathBuf, CachedCover>>>,
 }
 
 fn cover_format(data: &[u8]) -> Option<(&'static str, &'static str)> {
@@ -168,32 +180,65 @@ fn materialize_cover(
 }
 
 impl CoverCache {
+    fn generation(&self) -> u64 {
+        self.next_generation.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
     pub fn read(
         &self,
         cache_directory: &Path,
         file_path: &Path,
     ) -> Result<Option<PathBuf>, String> {
-        let Some(cover) = read_embedded_cover(file_path)? else {
-            return Ok(None);
+        let metadata = fs::metadata(file_path).map_err(|error| error.to_string())?;
+        let source = SourceStamp {
+            bytes: metadata.len(),
+            modified: metadata.modified().ok(),
         };
-        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        materialize_cover(cache_directory, &format!("detail-{generation}"), &cover).map(Some)
-    }
-}
+        let generation = self.generation();
+        if let Some(path) = self
+            .entries
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get_mut(file_path)
+            .filter(|entry| {
+                entry.source == source
+                    && entry
+                        .path
+                        .as_ref()
+                        .map(|path| path.is_file())
+                        .unwrap_or(true)
+            })
+            .map(|entry| {
+                entry.last_used = generation;
+                entry.path.clone()
+            })
+        {
+            return Ok(path);
+        }
 
-pub fn read_for_media(
-    cache_directory: &Path,
-    file_path: &Path,
-    generation: u64,
-) -> Result<TrackAssets, String> {
-    let Some(cover) = read_embedded_cover(file_path)? else {
-        return Ok(TrackAssets::default());
-    };
-    let media_cover_path =
-        materialize_cover(cache_directory, &format!("metadata-{generation}"), &cover)?;
-    Ok(TrackAssets {
-        media_cover_path: Some(media_cover_path),
-    })
+        let path = read_embedded_cover(file_path)?
+            .map(|cover| materialize_cover(cache_directory, &format!("cover-{generation}"), &cover))
+            .transpose()?;
+        let mut entries = self.entries.lock().map_err(|error| error.to_string())?;
+        if entries.len() >= MAX_MEMORY_CACHE_ENTRIES && !entries.contains_key(file_path) {
+            if let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(path, _)| path.clone())
+            {
+                entries.remove(&oldest);
+            }
+        }
+        entries.insert(
+            file_path.to_path_buf(),
+            CachedCover {
+                source,
+                path: path.clone(),
+                last_used: generation,
+            },
+        );
+        Ok(path)
+    }
 }
 
 #[cfg(test)]
@@ -219,5 +264,24 @@ mod tests {
             validate_cover(&png).unwrap_err(),
             "embedded cover dimensions are too large"
         );
+    }
+
+    #[test]
+    fn remembers_tracks_without_embedded_artwork_and_invalidates_on_change() {
+        let directory =
+            std::env::temp_dir().join(format!("hydrogen-cover-cache-test-{}", std::process::id()));
+        let audio_path = directory.join("track.bin");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&audio_path, b"not tagged audio").unwrap();
+        let cache = CoverCache::default();
+
+        assert_eq!(cache.read(&directory, &audio_path).unwrap(), None);
+        assert_eq!(cache.read(&directory, &audio_path).unwrap(), None);
+        assert_eq!(cache.entries.lock().unwrap().len(), 1);
+
+        fs::write(&audio_path, b"changed untagged audio").unwrap();
+        assert_eq!(cache.read(&directory, &audio_path).unwrap(), None);
+        assert_eq!(cache.entries.lock().unwrap()[&audio_path].source.bytes, 22);
+        let _ = fs::remove_dir_all(directory);
     }
 }

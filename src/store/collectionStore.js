@@ -41,8 +41,8 @@ export const useCollectionStore = defineStore('collectionStore', {
     snapshot() {
       return normalizeCollections(this)
     },
-    async hydrate() {
-      const value = await windowApi.getCollections()
+    async hydrate(initialCollections) {
+      const value = arguments.length ? initialCollections : await windowApi.getCollections()
       this.applyCollections(value)
       this.hydrated = true
     },
